@@ -29,11 +29,11 @@ const VIDEO_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * RGB_COLOR_SIZE;
 // I think this is the solution. Just need to get the right number here.
 
 // 1028 (2 ^ 10) * 4 - 2 (2^ 12).
-const GAP_MULTIPLIER: f32 = 0.97;
-const AUDIO_BUFFER_SIZE: usize = 4112;
+// const AUDIO_BUFFER_SIZE: usize = 4112;
+const AUDIO_BUFFER_SIZE: usize = 4376;
 const AUDIO_SAMPLE_HZ: u32 = 32728;
 // const AUDIO_TRUNCATED_BYTES: usize = 6;
-const AUDIO_TRUNCATED_BYTES: usize = 4;
+// const AUDIO_TRUNCATED_BYTES: usize = 4;
 // const AUDIO_SAMPLE_HZ: u32 = (32728.0 * GAP_MULTIPLIER) as u32;
 
 const FULL_BUFF_SIZE: usize = VIDEO_BUFFER_SIZE + AUDIO_BUFFER_SIZE;
@@ -130,19 +130,17 @@ impl DS {
 
     // Should try moving this to a separate audio device
     pub fn serve_audio(&self, sink: &rodio::Sink, audio: [u8; AUDIO_BUFFER_SIZE]) {
-        let mut i16_sample: Vec<i16> = audio
+        let i16_sample: Vec<i16> = audio
             .chunks(2)
             .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
             .collect();
 
         // The last 4 bytes in the buffer EXCEPT IN RARE CASES don't contain any data.
         // So we must size the array to include it, but can truncate.
-        let (remaining_sample, truncated) =
-            i16_sample.split_at(AUDIO_BUFFER_SIZE / 2 - AUDIO_TRUNCATED_BYTES);
+        let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
 
         // Set speed appropriately - might not ultimately be necessary.
-        let audio_src = rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample)
-            .speed(GAP_MULTIPLIER);
+        let audio_src = rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample);
         // println!("playing: {:?}", remaining_sample);
         // println!("truncated: {:?}", truncated);
 
