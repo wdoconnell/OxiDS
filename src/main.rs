@@ -5,9 +5,10 @@ use minifb::ScaleMode;
 use minifb::Window;
 use minifb::WindowOptions;
 use rodio::OutputStream;
-use rodio::Source;
 use rusb::{DeviceHandle, GlobalContext};
+use std::ops::Sub;
 use std::time::Duration;
+use std::time::SystemTime;
 
 // const BULK_ENDPOINT_ADDRESS: u8 = 130;
 const VID_3DS: u16 = 0x16D0;
@@ -30,8 +31,10 @@ const VIDEO_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * RGB_COLOR_SIZE;
 
 // 1028 (2 ^ 10) * 4 - 2 (2^ 12).
 // const AUDIO_BUFFER_SIZE: usize = 4112;
+// BELOW WAS THE CONFIRMDD CORRECT ONE
 const AUDIO_BUFFER_SIZE: usize = 4376;
 const AUDIO_SAMPLE_HZ: u32 = 32728;
+const MAX_PERMITTED_AUDIO_FRAME_DELAY: usize = 5;
 // const AUDIO_TRUNCATED_BYTES: usize = 6;
 // const AUDIO_TRUNCATED_BYTES: usize = 4;
 // const AUDIO_SAMPLE_HZ: u32 = (32728.0 * GAP_MULTIPLIER) as u32;
@@ -137,12 +140,18 @@ impl DS {
 
         // The last 4 bytes in the buffer EXCEPT IN RARE CASES don't contain any data.
         // So we must size the array to include it, but can truncate.
+        // Think we can slow down speed but in doing so need to change hz
         let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
 
         // Set speed appropriately - might not ultimately be necessary.
         let audio_src = rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample);
-        // println!("playing: {:?}", remaining_sample);
-        // println!("truncated: {:?}", truncated);
+
+        // If our audio starts getting behind due to hardware lag, reset before adding the next sound
+        // to the sink.
+        if sink.len() > MAX_PERMITTED_AUDIO_FRAME_DELAY {
+            sink.clear();
+            sink.play();
+        }
 
         sink.append(audio_src);
     }
@@ -173,10 +182,6 @@ impl DS {
 
         let mut audio_arr = [0u8; AUDIO_BUFFER_SIZE];
         audio_arr.copy_from_slice(audio_slice);
-
-        // let last_nonzero = audio_buff.iter().rposition(|&x| x != 0).unwrap();
-        // let total_zeroes = audio_buff.len() - last_nonzero;
-        // println!("{:?}", total_zeroes);
         (vid_arr, audio_arr)
     }
 }
@@ -320,21 +325,53 @@ fn u8_to_u32(u8_buffer: &[u8]) -> Vec<u32> {
     u32_buffer
 }
 
+struct FpsCounter {
+    start_time: SystemTime,
+    current_frames: i32,
+}
+
+impl FpsCounter {
+    pub fn new() -> Self {
+        Self {
+            start_time: std::time::SystemTime::now(),
+            current_frames: 0,
+        }
+    }
+
+    pub fn maybe_print_fps(&mut self) {
+        let current_time = std::time::SystemTime::now();
+
+        let one_second_ago = current_time.sub(std::time::Duration::from_secs(1));
+        if one_second_ago.gt(&self.start_time) {
+            self.start_time = current_time;
+            println!("FPS: {}", self.current_frames);
+            self.current_frames = 0;
+        }
+    }
+
+    pub fn increment_frame(&mut self) {
+        self.current_frames += 1;
+    }
+}
+
 fn main() {
     let mut ds = get_3ds_device().expect("unable to locate 3ds device");
     ds.configure().expect("could not configure 3ds");
 
-    // Audio
-    let (audio_stream, audio_stream_handle) =
+    // Start Audio
+    let (_audio_str, audio_stream_handle) =
         OutputStream::try_default().expect("couldnt create output stream");
     let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
 
     // Run
+    let mut counter = FpsCounter::new();
     while ds.display.window.is_open() && !ds.display.window.is_key_down(minifb::Key::Escape) {
         ds.write_control();
         let (video, audio) = ds.get_buffers();
         ds.serve_audio(&sink, audio);
-        ds.display.serve_video(video)
+        ds.display.serve_video(video);
+        counter.maybe_print_fps();
+        counter.increment_frame();
     }
 
     // Release interface
