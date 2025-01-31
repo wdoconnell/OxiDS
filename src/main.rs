@@ -45,7 +45,7 @@ const WINDOW_HEIGHT: usize = 240;
 const WINDOW_WIDTH: usize = 720;
 
 // Not reaching 60 fps - seems locked at 30.
-const TARGET_FPS: usize = 60;
+const TARGET_FPS: usize = 30;
 struct DS {
     handle: DeviceHandle<GlobalContext>,
     endpoint: Endpoint,
