@@ -1,5 +1,9 @@
-// TODO
-// Consider using formal audio codecs - see https://docs.rs/symphonia/latest/symphonia/all.html#structs
+mod constants;
+use constants::av::{
+    AUDIO_BUFFER_SIZE, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT, FULL_BUFF_SIZE,
+    MAX_PERMITTED_AUDIO_FRAME_DELAY, PID_3DS, TARGET_FPS, VEND_OUT_IDX, VEND_OUT_REQ,
+    VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
+};
 use minifb::Scale;
 use minifb::ScaleMode;
 use minifb::Window;
@@ -7,45 +11,8 @@ use minifb::WindowOptions;
 use rodio::OutputStream;
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
-use std::time::Duration;
 use std::time::SystemTime;
 
-// const BULK_ENDPOINT_ADDRESS: u8 = 130;
-const VID_3DS: u16 = 0x16D0;
-const PID_3DS: u16 = 0x06A3;
-
-// Will this break if we drop below 10fps?
-const DEFAULT_TIMEOUT: Duration = Duration::from_millis(100);
-const VEND_OUT_REQ: u8 = 0x40;
-const VEND_OUT_VALUE: u16 = 0;
-const VEND_OUT_IDX: u16 = 0;
-
-const VIDEO_WIDTH: usize = 240;
-const VIDEO_HEIGHT: usize = 720;
-const RGB_COLOR_SIZE: usize = 3;
-const VIDEO_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * RGB_COLOR_SIZE;
-
-// const UNKNOWN_BUFFER_SIZE: usize = 1916;
-// const UNKNOWN_BUFFER_SIZE: usize = 2000;
-// I think this is the solution. Just need to get the right number here.
-
-// 1028 (2 ^ 10) * 4 - 2 (2^ 12).
-// const AUDIO_BUFFER_SIZE: usize = 4112;
-// BELOW WAS THE CONFIRMDD CORRECT ONE
-const AUDIO_BUFFER_SIZE: usize = 4376;
-const AUDIO_SAMPLE_HZ: u32 = 32728;
-const MAX_PERMITTED_AUDIO_FRAME_DELAY: usize = 5;
-// const AUDIO_TRUNCATED_BYTES: usize = 6;
-// const AUDIO_TRUNCATED_BYTES: usize = 4;
-// const AUDIO_SAMPLE_HZ: u32 = (32728.0 * GAP_MULTIPLIER) as u32;
-
-const FULL_BUFF_SIZE: usize = VIDEO_BUFFER_SIZE + AUDIO_BUFFER_SIZE;
-// This is just an initial value when window can be resized.
-const WINDOW_HEIGHT: usize = 240;
-const WINDOW_WIDTH: usize = 720;
-
-// Not reaching 60 fps - seems locked at 30.
-const TARGET_FPS: usize = 30;
 struct DS {
     handle: DeviceHandle<GlobalContext>,
     endpoint: Endpoint,
