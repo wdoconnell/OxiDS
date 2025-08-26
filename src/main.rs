@@ -9,7 +9,7 @@ use minifb::Scale;
 use minifb::ScaleMode;
 use minifb::Window;
 use minifb::WindowOptions;
-use rodio::OutputStream;
+use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
 use std::time::SystemTime;
@@ -102,11 +102,15 @@ impl DS {
     // Should try moving this to a separate audio device
     pub fn serve_audio(&self, sink: &rodio::Sink, audio: [u8; AUDIO_BUFFER_SIZE]) {
         let i16_sample: Vec<i16> = audio
-            .chunks(2)
+            .chunks_exact(2)
             .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
             .collect();
 
-        let audio_src = rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, i16_sample);
+        let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
+
+        // Set speed appropriately - might not ultimately be necessary.
+        let audio_src =
+            rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample).speed(1.0);
 
         // If our audio starts getting behind due to hardware lag, reset before adding to sink
         if sink.len() > MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM {
@@ -186,7 +190,6 @@ impl CustomWindowOptions {
         }
     }
 
-    // Should this be here or trait impl?
     pub fn inner(&self) -> WindowOptions {
         self.opts
     }
