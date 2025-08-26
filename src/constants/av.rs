@@ -15,6 +15,7 @@ pub const VIDEO_HEIGHT: usize = 720;
 pub const RGB_COLOR_SIZE: usize = 3;
 pub const VIDEO_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * RGB_COLOR_SIZE;
 
+// This is the size as u8 not u16
 pub const AUDIO_BUFFER_SIZE: usize = 4376;
 pub const AUDIO_SAMPLE_HZ: u32 = 32728;
 pub const MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM: usize = 5;
@@ -25,4 +26,4 @@ pub const WINDOW_HEIGHT: usize = 240;
 pub const WINDOW_WIDTH: usize = 720;
 
 // Not reaching 60 fps - seems locked at 30.
-pub const TARGET_FPS: usize = 30;
+pub const TARGET_FPS: usize = 60;

@@ -142,10 +142,6 @@ impl DS {
             }
         }
 
-        // println!("buffer length: {:?}", buff.len());
-        // let (begin, end) = buff.split_at(518400);
-        // println!("beginning of buffer {:?}", end);
-
         let (vid_slice, audio_slice) = buff.split_at(VIDEO_BUFFER_SIZE);
         let mut vid_arr = [0u8; VIDEO_BUFFER_SIZE];
         vid_arr.copy_from_slice(vid_slice);
@@ -272,9 +268,9 @@ fn rotate_270(buffer: &[u32], width: usize, height: usize) -> Vec<u32> {
     rotated_buffer
 }
 
-// CHUNKING CODE
 fn u8_to_u32(u8_buffer: &[u8]) -> Vec<u32> {
     let mut u32_buffer = Vec::with_capacity(u8_buffer.len() / 3);
+    // See if we can replace with exact
     for chunk in u8_buffer.chunks(3) {
         if chunk.len() == 3 {
             let r = chunk[0] as u32;
@@ -337,7 +333,11 @@ fn main() {
     while ds.display.window.is_open() && !ds.display.window.is_key_down(minifb::Key::Escape) {
         ds.write_control();
         let (video, audio) = ds.get_buffers();
+        // Not serving audio doesn't change fps.
         ds.serve_audio(&sink, audio);
+        // Not serving video in this way doubles FPS
+        // We should continue reading from the endpoint while video is being served.
+        // And also optimize the video serving fns.
         ds.display.serve_video(video);
         counter.maybe_print_fps();
         counter.increment_frame();
