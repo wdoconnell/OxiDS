@@ -1,8 +1,9 @@
 mod constants;
+use constants::av::MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM;
 use constants::av::{
-    AUDIO_BUFFER_SIZE, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT, FULL_BUFF_SIZE,
-    MAX_PERMITTED_AUDIO_FRAME_DELAY, PID_3DS, TARGET_FPS, VEND_OUT_IDX, VEND_OUT_REQ,
-    VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
+    AUDIO_BUFFER_SIZE, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT, FULL_BUFF_SIZE, PID_3DS, TARGET_FPS,
+    VEND_OUT_IDX, VEND_OUT_REQ, VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VID_3DS, WINDOW_HEIGHT,
+    WINDOW_WIDTH,
 };
 use minifb::Scale;
 use minifb::ScaleMode;
@@ -105,17 +106,10 @@ impl DS {
             .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
             .collect();
 
-        // The last 4 bytes in the buffer EXCEPT IN RARE CASES don't contain any data.
-        // So we must size the array to include it, but can truncate.
-        // Think we can slow down speed but in doing so need to change hz
-        let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
+        let audio_src = rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, i16_sample);
 
-        // Set speed appropriately - might not ultimately be necessary.
-        let audio_src = rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample);
-
-        // If our audio starts getting behind due to hardware lag, reset before adding the next sound
-        // to the sink.
-        if sink.len() > MAX_PERMITTED_AUDIO_FRAME_DELAY {
+        // If our audio starts getting behind due to hardware lag, reset before adding to sink
+        if sink.len() > MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM {
             sink.clear();
             sink.play();
         }
