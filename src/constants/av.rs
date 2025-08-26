@@ -15,19 +15,9 @@ pub const VIDEO_HEIGHT: usize = 720;
 pub const RGB_COLOR_SIZE: usize = 3;
 pub const VIDEO_BUFFER_SIZE: usize = VIDEO_WIDTH * VIDEO_HEIGHT * RGB_COLOR_SIZE;
 
-// pub const UNKNOWN_BUFFER_SIZE: usize = 1916;
-// pub const UNKNOWN_BUFFER_SIZE: usize = 2000;
-// I think this is the solution. Just need to get the right number here.
-
-// 1028 (2 ^ 10) * 4 - 2 (2^ 12).
-// pub const AUDIO_BUFFER_SIZE: usize = 4112;
-// BELOW WAS THE CONFIRMDD CORRECT ONE
 pub const AUDIO_BUFFER_SIZE: usize = 4376;
 pub const AUDIO_SAMPLE_HZ: u32 = 32728;
 pub const MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM: usize = 5;
-// pub const AUDIO_TRUNCATED_BYTES: usize = 6;
-// pub const AUDIO_TRUNCATED_BYTES: usize = 4;
-// pub const AUDIO_SAMPLE_HZ: u32 = (32728.0 * GAP_MULTIPLIER) as u32;
 
 pub const FULL_BUFF_SIZE: usize = VIDEO_BUFFER_SIZE + AUDIO_BUFFER_SIZE;
 // This is just an initial value when window can be resized.

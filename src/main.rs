@@ -99,13 +99,14 @@ impl DS {
             .expect("unable to vend out to device");
     }
 
-    // Should try moving this to a separate audio device
+    // Swap endianness
     pub fn serve_audio(&self, sink: &rodio::Sink, audio: [u8; AUDIO_BUFFER_SIZE]) {
         let i16_sample: Vec<i16> = audio
             .chunks_exact(2)
             .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
             .collect();
 
+        // -136?
         let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
 
         // Set speed appropriately - might not ultimately be necessary.
@@ -140,6 +141,10 @@ impl DS {
                 }
             }
         }
+
+        // println!("buffer length: {:?}", buff.len());
+        // let (begin, end) = buff.split_at(518400);
+        // println!("beginning of buffer {:?}", end);
 
         let (vid_slice, audio_slice) = buff.split_at(VIDEO_BUFFER_SIZE);
         let mut vid_arr = [0u8; VIDEO_BUFFER_SIZE];
