@@ -12,7 +12,7 @@ use minifb::WindowOptions;
 use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::SystemTime;
 
 struct DS {
@@ -31,12 +31,14 @@ impl Display {
         Self { window }
     }
 
-    pub fn serve_video(&mut self, video: [u8; VIDEO_BUFFER_SIZE]) {
-        let vid_buf_32 = u8_to_u32(&video);
-        let rotated_vid_buf = rotate_270(&vid_buf_32, WINDOW_HEIGHT, WINDOW_WIDTH);
-        self.window
-            .update_with_buffer(&rotated_vid_buf, WINDOW_WIDTH, WINDOW_HEIGHT)
-            .unwrap();
+    pub fn serve_video(&mut self, video_channel: Receiver<[u8; VIDEO_BUFFER_SIZE]>) {
+        for video in video_channel {
+            let vid_buf_32 = u8_to_u32(&video);
+            let rotated_vid_buf = rotate_270(&vid_buf_32, WINDOW_HEIGHT, WINDOW_WIDTH);
+            self.window
+                .update_with_buffer(&rotated_vid_buf, WINDOW_WIDTH, WINDOW_HEIGHT)
+                .unwrap();
+        }
     }
 }
 
@@ -128,7 +130,11 @@ impl DS {
         }
     }
 
-    pub fn get_buffers(&self) -> ([u8; VIDEO_BUFFER_SIZE], [u8; AUDIO_BUFFER_SIZE]) {
+    pub fn populate_buffers(
+        &self,
+        video_tx: Sender<[u8; VIDEO_BUFFER_SIZE]>,
+        audio_tx: Sender<[u8; AUDIO_BUFFER_SIZE]>,
+    ) {
         let mut buff = vec![0u8; FULL_BUFF_SIZE];
 
         loop {
@@ -151,10 +157,11 @@ impl DS {
         let (vid_slice, audio_slice) = buff.split_at(VIDEO_BUFFER_SIZE);
         let mut vid_arr = [0u8; VIDEO_BUFFER_SIZE];
         vid_arr.copy_from_slice(vid_slice);
+        video_tx.send(vid_arr);
 
         let mut audio_arr = [0u8; AUDIO_BUFFER_SIZE];
         audio_arr.copy_from_slice(audio_slice);
-        (vid_arr, audio_arr)
+        audio_tx.send(audio_arr);
     }
 }
 
@@ -337,9 +344,10 @@ fn main() {
     // Start FPS
     let mut counter = FpsCounter::new();
 
-    let (vid_tx, vid_rx) = mpsc::channel();
+    let (video_tx, video_rx) = mpsc::channel();
     let (audio_tx, audio_rx) = mpsc::channel();
 
+    // Let's change this to keep windowing on hte main thread and change the DS struct so that only the USB stuff is in there.
     std::thread::spawn(|| {
         while ds.display.window.is_open() && !ds.display.window.is_key_down(minifb::Key::Escape) {
             ds.serve_audio(&sink, audio_rx);
@@ -352,7 +360,7 @@ fn main() {
     // Get buffers until the window closes
     while ds.display.window.is_open() && !ds.display.window.is_key_down(minifb::Key::Escape) {
         ds.write_control();
-        let (video, audio) = ds.get_buffers();
+        ds.populate_buffers(video_tx, audio_tx);
     }
 
     // Release interface
