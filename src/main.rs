@@ -12,6 +12,7 @@ use minifb::WindowOptions;
 use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
+use std::sync::mpsc::{self, Receiver};
 use std::time::SystemTime;
 
 struct DS {
@@ -99,27 +100,32 @@ impl DS {
             .expect("unable to vend out to device");
     }
 
-    // Swap endianness
-    pub fn serve_audio(&self, sink: &rodio::Sink, audio: [u8; AUDIO_BUFFER_SIZE]) {
-        let i16_sample: Vec<i16> = audio
-            .chunks_exact(2)
-            .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
-            .collect();
+    pub fn serve_audio(
+        &self,
+        sink: &rodio::Sink,
+        audio_channel: Receiver<[u8; AUDIO_BUFFER_SIZE]>,
+    ) {
+        for audio in audio_channel {
+            // Swap endianness
+            let i16_sample: Vec<i16> = audio
+                .chunks_exact(2)
+                .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
+                .collect();
 
-        // -136?
-        let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
+            let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
 
-        // Set speed appropriately - might not ultimately be necessary.
-        let audio_src =
-            rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample).speed(1.0);
+            // Set speed appropriately - might not ultimately be necessary.
+            let audio_src =
+                rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample).speed(1.0);
 
-        // If our audio starts getting behind due to hardware lag, reset before adding to sink
-        if sink.len() > MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM {
-            sink.clear();
-            sink.play();
+            // If our audio starts getting behind due to hardware lag, reset before adding to sink
+            if sink.len() > MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM {
+                sink.clear();
+                sink.play();
+            }
+
+            sink.append(audio_src);
         }
-
-        sink.append(audio_src);
     }
 
     pub fn get_buffers(&self) -> ([u8; VIDEO_BUFFER_SIZE], [u8; AUDIO_BUFFER_SIZE]) {
@@ -276,7 +282,7 @@ fn u8_to_u32(u8_buffer: &[u8]) -> Vec<u32> {
             let r = chunk[0] as u32;
             let g = chunk[1] as u32;
             let b = chunk[2] as u32;
-            let alpha = 255; // Code max opacity
+            let alpha = 255;
 
             let px = (alpha << 24) | (r << 16) | (g << 8) | b;
 
@@ -328,19 +334,25 @@ fn main() {
         OutputStream::try_default().expect("couldnt create output stream");
     let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
 
-    // Run
+    // Start FPS
     let mut counter = FpsCounter::new();
+
+    let (vid_tx, vid_rx) = mpsc::channel();
+    let (audio_tx, audio_rx) = mpsc::channel();
+
+    std::thread::spawn(|| {
+        while ds.display.window.is_open() && !ds.display.window.is_key_down(minifb::Key::Escape) {
+            ds.serve_audio(&sink, audio_rx);
+            ds.display.serve_video(video_rx);
+            counter.maybe_print_fps();
+            counter.increment_frame();
+        }
+    });
+
+    // Get buffers until the window closes
     while ds.display.window.is_open() && !ds.display.window.is_key_down(minifb::Key::Escape) {
         ds.write_control();
         let (video, audio) = ds.get_buffers();
-        // Not serving audio doesn't change fps.
-        ds.serve_audio(&sink, audio);
-        // Not serving video in this way doubles FPS
-        // We should continue reading from the endpoint while video is being served.
-        // And also optimize the video serving fns.
-        ds.display.serve_video(video);
-        counter.maybe_print_fps();
-        counter.increment_frame();
     }
 
     // Release interface
