@@ -13,63 +13,82 @@ use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+struct DSConfig {
+    using_kernel_driver: bool,
+}
+
+impl DSConfig {
+    pub fn new(using_kernel_driver: bool) -> Self {
+        Self {
+            using_kernel_driver,
+        }
+    }
+}
 
 struct DS {
+    config: DSConfig,
     handle: DeviceHandle<GlobalContext>,
     endpoint: Endpoint,
-    using_kernel_driver: bool,
-    display: Display,
 }
 
-struct Display {
-    window: Window,
-}
+pub fn serve_audio(sink: &rodio::Sink, audio_channel: &Receiver<[u8; AUDIO_BUFFER_SIZE]>) {
+    for audio in audio_channel {
+        // Swap endianness
+        let i16_sample: Vec<i16> = audio
+            .chunks_exact(2)
+            .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
+            .collect();
 
-impl Display {
-    pub fn new(window: Window) -> Self {
-        Self { window }
-    }
+        let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
 
-    pub fn serve_video(&mut self, video_channel: Receiver<[u8; VIDEO_BUFFER_SIZE]>) {
-        for video in video_channel {
-            let vid_buf_32 = u8_to_u32(&video);
-            let rotated_vid_buf = rotate_270(&vid_buf_32, WINDOW_HEIGHT, WINDOW_WIDTH);
-            self.window
-                .update_with_buffer(&rotated_vid_buf, WINDOW_WIDTH, WINDOW_HEIGHT)
-                .unwrap();
+        // Set speed appropriately - might not ultimately be necessary.
+        let audio_src =
+            rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample).speed(1.0);
+
+        // If our audio starts getting behind due to hardware lag, reset before adding to sink
+        if sink.len() > MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM {
+            sink.clear();
+            sink.play();
         }
+
+        sink.append(audio_src);
+    }
+}
+
+pub fn serve_video(window: &mut Window, video_channel: &Receiver<[u8; VIDEO_BUFFER_SIZE]>) {
+    for video in video_channel {
+        let vid_buf_32 = u8_to_u32(&video);
+        let rotated_vid_buf = rotate_270(&vid_buf_32, WINDOW_HEIGHT, WINDOW_WIDTH);
+        window
+            .update_with_buffer(&rotated_vid_buf, WINDOW_WIDTH, WINDOW_HEIGHT)
+            .unwrap();
     }
 }
 
 impl DS {
     pub fn new(handle: DeviceHandle<GlobalContext>, endpoint: Endpoint) -> Self {
-        let opts = CustomWindowOptions::new(true, true, Scale::X2, ScaleMode::AspectRatioStretch);
-
-        let mut window =
-            minifb::Window::new("Krab3DS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
-        window.set_target_fps(TARGET_FPS);
-
-        let display = Display::new(window);
+        let config = DSConfig::new(false);
 
         Self {
+            config,
             handle,
-            using_kernel_driver: false,
             endpoint,
-            display,
         }
     }
 
     pub fn configure(&mut self) -> Result<bool, anyhow::Error> {
-        self.using_kernel_driver = match self.handle.kernel_driver_active(self.endpoint.iface) {
-            Ok(true) => {
-                self.handle
-                    .detach_kernel_driver(self.endpoint.iface)
-                    .unwrap();
-                true
-            }
-            _ => false,
-        };
+        self.config.using_kernel_driver =
+            match self.handle.kernel_driver_active(self.endpoint.iface) {
+                Ok(true) => {
+                    self.handle
+                        .detach_kernel_driver(self.endpoint.iface)
+                        .unwrap();
+                    true
+                }
+                _ => false,
+            };
 
         self.handle
             .set_active_configuration(self.endpoint.config)
@@ -102,38 +121,10 @@ impl DS {
             .expect("unable to vend out to device");
     }
 
-    pub fn serve_audio(
-        &self,
-        sink: &rodio::Sink,
-        audio_channel: Receiver<[u8; AUDIO_BUFFER_SIZE]>,
-    ) {
-        for audio in audio_channel {
-            // Swap endianness
-            let i16_sample: Vec<i16> = audio
-                .chunks_exact(2)
-                .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
-                .collect();
-
-            let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
-
-            // Set speed appropriately - might not ultimately be necessary.
-            let audio_src =
-                rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample).speed(1.0);
-
-            // If our audio starts getting behind due to hardware lag, reset before adding to sink
-            if sink.len() > MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM {
-                sink.clear();
-                sink.play();
-            }
-
-            sink.append(audio_src);
-        }
-    }
-
     pub fn populate_buffers(
         &self,
-        video_tx: Sender<[u8; VIDEO_BUFFER_SIZE]>,
-        audio_tx: Sender<[u8; AUDIO_BUFFER_SIZE]>,
+        video_tx: &Sender<[u8; VIDEO_BUFFER_SIZE]>,
+        audio_tx: &Sender<[u8; AUDIO_BUFFER_SIZE]>,
     ) {
         let mut buff = vec![0u8; FULL_BUFF_SIZE];
 
@@ -157,11 +148,13 @@ impl DS {
         let (vid_slice, audio_slice) = buff.split_at(VIDEO_BUFFER_SIZE);
         let mut vid_arr = [0u8; VIDEO_BUFFER_SIZE];
         vid_arr.copy_from_slice(vid_slice);
-        video_tx.send(vid_arr);
+        // Add error handling
+        video_tx.send(vid_arr).unwrap();
 
         let mut audio_arr = [0u8; AUDIO_BUFFER_SIZE];
         audio_arr.copy_from_slice(audio_slice);
-        audio_tx.send(audio_arr);
+        // Add error handling
+        audio_tx.send(audio_arr).unwrap();
     }
 }
 
@@ -341,31 +334,36 @@ fn main() {
         OutputStream::try_default().expect("couldnt create output stream");
     let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
 
+    // Start window
+    let opts = CustomWindowOptions::new(true, true, Scale::X2, ScaleMode::AspectRatioStretch);
+
+    let mut window =
+        minifb::Window::new("Krab3DS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
+    window.set_target_fps(TARGET_FPS);
+
     // Start FPS
     let mut counter = FpsCounter::new();
 
     let (video_tx, video_rx) = mpsc::channel();
     let (audio_tx, audio_rx) = mpsc::channel();
 
-    // Let's change this to keep windowing on hte main thread and change the DS struct so that only the USB stuff is in there.
-    std::thread::spawn(|| {
-        while ds.display.window.is_open() && !ds.display.window.is_key_down(minifb::Key::Escape) {
-            ds.serve_audio(&sink, audio_rx);
-            ds.display.serve_video(video_rx);
-            counter.maybe_print_fps();
-            counter.increment_frame();
-        }
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        println!("called write control");
+        ds.write_control();
+        println!("called populate buffers");
+        ds.populate_buffers(&video_tx, &audio_tx);
     });
 
-    // Get buffers until the window closes
-    while ds.display.window.is_open() && !ds.display.window.is_key_down(minifb::Key::Escape) {
-        ds.write_control();
-        ds.populate_buffers(video_tx, audio_tx);
+    while window.is_open() && !window.is_key_down(minifb::Key::Escape) {
+        serve_audio(&sink, &audio_rx);
+        serve_video(&mut window, &video_rx);
+        counter.maybe_print_fps();
+        counter.increment_frame();
     }
-
     // Release interface
-    ds.handle.release_interface(ds.endpoint.iface).unwrap();
-    if ds.using_kernel_driver {
-        ds.handle.attach_kernel_driver(ds.endpoint.iface).unwrap();
-    };
+    // ds.handle.release_interface(ds.endpoint.iface).unwrap();
+    // if ds.config.using_kernel_driver {
+    //     ds.handle.attach_kernel_driver(ds.endpoint.iface).unwrap();
+    // };
 }
