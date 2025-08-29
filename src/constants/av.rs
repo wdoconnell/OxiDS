@@ -25,5 +25,5 @@ pub const FULL_BUFF_SIZE: usize = VIDEO_BUFFER_SIZE + AUDIO_BUFFER_SIZE;
 pub const WINDOW_HEIGHT: usize = 240;
 pub const WINDOW_WIDTH: usize = 720;
 
-// Not reaching 60 fps - seems locked at 30.
-pub const TARGET_FPS: usize = 60;
+// Maximize
+pub const TARGET_FPS: usize = 80;

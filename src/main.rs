@@ -13,7 +13,7 @@ use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 struct DSConfig {
     using_kernel_driver: bool,
@@ -33,6 +33,14 @@ struct DS {
     endpoint: Endpoint,
 }
 
+// UNSAFE
+fn find_silence_start(samples: &[i16], min_zeros: usize) -> usize {
+    samples
+        .windows(min_zeros)
+        .position(|window| window.iter().all(|&x| x == 0))
+        .unwrap_or(samples.len())
+}
+
 pub fn serve_audio(sink: &rodio::Sink, audio_channel: &Receiver<[u8; AUDIO_BUFFER_SIZE]>) {
     for audio in audio_channel {
         // Swap endianness
@@ -41,24 +49,29 @@ pub fn serve_audio(sink: &rodio::Sink, audio_channel: &Receiver<[u8; AUDIO_BUFFE
             .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
             .collect();
 
-        let (remaining_sample, _truncated) = i16_sample.split_at(AUDIO_BUFFER_SIZE / 2);
+        // Should probably set a minimum before truncating a 5x 0
+        let split_pt = find_silence_start(&i16_sample, 5);
 
-        // Set speed appropriately - might not ultimately be necessary.
+        let remaining_sample = &i16_sample[..split_pt];
+
         let audio_src =
             rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample).speed(1.0);
 
-        // If our audio starts getting behind due to hardware lag, reset before adding to sink
+        // Don't let audio get too far behind
         if sink.len() > MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM {
             sink.clear();
             sink.play();
         }
 
         sink.append(audio_src);
+        // }
     }
 }
 
 pub fn serve_video(window: &mut Window, video_channel: &Receiver<[u8; VIDEO_BUFFER_SIZE]>) {
     for video in video_channel {
+        // We need a video sink here to track where vid is
+        // and to ensure that video doesn't get togggar behind
         let vid_buf_32 = u8_to_u32(&video);
         let rotated_vid_buf = rotate_270(&vid_buf_32, WINDOW_HEIGHT, WINDOW_WIDTH);
         window
@@ -140,7 +153,7 @@ impl DS {
                 }
                 Err(err) => {
                     eprintln!("unable to read from bulk endpoint: {}", err);
-                    break;
+                    // break;
                 }
             }
         }
@@ -276,7 +289,7 @@ fn rotate_270(buffer: &[u32], width: usize, height: usize) -> Vec<u32> {
 
 fn u8_to_u32(u8_buffer: &[u8]) -> Vec<u32> {
     let mut u32_buffer = Vec::with_capacity(u8_buffer.len() / 3);
-    // See if we can replace with exact
+    // See if we can replace with chunks exact?
     for chunk in u8_buffer.chunks(3) {
         if chunk.len() == 3 {
             let r = chunk[0] as u32;
@@ -309,13 +322,13 @@ impl FpsCounter {
         }
     }
 
-    pub fn maybe_print_fps(&mut self) {
+    pub fn maybe_print_usb_dataps(&mut self) {
         let current_time = std::time::SystemTime::now();
 
         let one_second_ago = current_time.sub(std::time::Duration::from_secs(1));
         if one_second_ago.gt(&self.start_time) {
             self.start_time = current_time;
-            println!("FPS: {}", self.current_frames);
+            println!("Data frames per second: {}", self.current_frames);
             self.current_frames = 0;
         }
     }
@@ -347,23 +360,31 @@ fn main() {
     let (video_tx, video_rx) = mpsc::channel();
     let (audio_tx, audio_rx) = mpsc::channel();
 
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(300));
-        println!("called write control");
-        ds.write_control();
-        println!("called populate buffers");
-        ds.populate_buffers(&video_tx, &audio_tx);
-    });
+    // This needs to be optimized as it's currently quite large (both of them are)
+    std::thread::Builder::new()
+        .stack_size(200 * 1024 * 1024)
+        .spawn(move || loop {
+            ds.write_control();
+            ds.populate_buffers(&video_tx, &audio_tx);
+            counter.maybe_print_usb_dataps();
+            counter.increment_frame();
+        })
+        .unwrap();
+
+    std::thread::Builder::new()
+        .stack_size(40 * 1024 * 1024)
+        .spawn(move || loop {
+            serve_audio(&sink, &audio_rx);
+        })
+        .unwrap();
 
     while window.is_open() && !window.is_key_down(minifb::Key::Escape) {
-        serve_audio(&sink, &audio_rx);
         serve_video(&mut window, &video_rx);
-        counter.maybe_print_fps();
-        counter.increment_frame();
     }
-    // Release interface
+
+    // Handle separately
     // ds.handle.release_interface(ds.endpoint.iface).unwrap();
     // if ds.config.using_kernel_driver {
-    //     ds.handle.attach_kernel_driver(ds.endpoint.iface).unwrap();
+    //     ds.handle.attach_kernel_driver(&ds.endpoint.iface).unwrap();
     // };
 }
