@@ -1,9 +1,8 @@
 mod constants;
-use constants::av::MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM;
 use constants::av::{
-    AUDIO_BUFFER_SIZE, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT, FULL_BUFF_SIZE, PID_3DS, TARGET_FPS,
-    VEND_OUT_IDX, VEND_OUT_REQ, VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VID_3DS, WINDOW_HEIGHT,
-    WINDOW_WIDTH,
+    AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT,
+    FULL_BUFF_SIZE, MAX_PERMITTED_FRAME_SAMPLE_DELAY_NUM, PID_3DS, TARGET_FPS, VEND_OUT_IDX,
+    VEND_OUT_REQ, VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
 };
 use minifb::Scale;
 use minifb::ScaleMode;
@@ -33,10 +32,10 @@ struct DS {
     endpoint: Endpoint,
 }
 
-// UNSAFE
-fn find_silence_start(samples: &[i16], min_zeros: usize) -> usize {
+fn find_audio_frame_end(samples: &[i16]) -> usize {
+    // A long sequence of zeroes indicates the end of the audio frame
     samples
-        .windows(min_zeros)
+        .windows(AUDIO_NUM_ZEROES_END_DELIMETER)
         .position(|window| window.iter().all(|&x| x == 0))
         .unwrap_or(samples.len())
 }
@@ -49,8 +48,7 @@ pub fn serve_audio(sink: &rodio::Sink, audio_channel: &Receiver<[u8; AUDIO_BUFFE
             .map(|chunk| (chunk[1] as i16) << 8 | (chunk[0] as i16))
             .collect();
 
-        // Should probably set a minimum before truncating a 5x 0
-        let split_pt = find_silence_start(&i16_sample, 5);
+        let split_pt = find_audio_frame_end(&i16_sample);
 
         let remaining_sample = &i16_sample[..split_pt];
 
@@ -58,13 +56,12 @@ pub fn serve_audio(sink: &rodio::Sink, audio_channel: &Receiver<[u8; AUDIO_BUFFE
             rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample).speed(1.0);
 
         // Don't let audio get too far behind
-        if sink.len() > MAX_PERMITTED_AUDIO_FRAME_SAMPLE_DELAY_NUM {
+        if sink.len() > MAX_PERMITTED_FRAME_SAMPLE_DELAY_NUM {
             sink.clear();
             sink.play();
         }
 
         sink.append(audio_src);
-        // }
     }
 }
 
@@ -347,9 +344,8 @@ fn main() {
         OutputStream::try_default().expect("couldnt create output stream");
     let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
 
-    // Start window
+    // Start Window
     let opts = CustomWindowOptions::new(true, true, Scale::X2, ScaleMode::AspectRatioStretch);
-
     let mut window =
         minifb::Window::new("Krab3DS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
     window.set_target_fps(TARGET_FPS);
@@ -357,6 +353,7 @@ fn main() {
     // Start FPS
     let mut counter = FpsCounter::new();
 
+    // Create channels for video and audio.
     let (video_tx, video_rx) = mpsc::channel();
     let (audio_tx, audio_rx) = mpsc::channel();
 
@@ -371,6 +368,8 @@ fn main() {
         })
         .unwrap();
 
+    // Play with this stack size to see how large thread is
+    // We can probbaly trck to see so we can optimize
     std::thread::Builder::new()
         .stack_size(40 * 1024 * 1024)
         .spawn(move || loop {
