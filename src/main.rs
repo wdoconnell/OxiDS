@@ -4,6 +4,7 @@ use constants::av::{
     FULL_BUFF_SIZE, MAX_PERMITTED_FRAME_SAMPLE_DELAY_NUM, PID_3DS, TARGET_FPS, VEND_OUT_IDX,
     VEND_OUT_REQ, VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
 };
+use crossbeam::channel;
 use minifb::Scale;
 use minifb::ScaleMode;
 use minifb::Window;
@@ -11,7 +12,6 @@ use minifb::WindowOptions;
 use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::SystemTime;
 
 struct DSConfig {
@@ -40,7 +40,7 @@ fn find_audio_frame_end(samples: &[i16]) -> usize {
         .unwrap_or(samples.len())
 }
 
-pub fn serve_audio(sink: &rodio::Sink, audio_channel: &Receiver<[u8; AUDIO_BUFFER_SIZE]>) {
+pub fn serve_audio(sink: &rodio::Sink, audio_channel: &channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>) {
     for audio in audio_channel {
         // Swap endianness
         let i16_sample: Vec<i16> = audio
@@ -65,7 +65,10 @@ pub fn serve_audio(sink: &rodio::Sink, audio_channel: &Receiver<[u8; AUDIO_BUFFE
     }
 }
 
-pub fn serve_video(window: &mut Window, video_channel: &Receiver<[u8; VIDEO_BUFFER_SIZE]>) {
+pub fn serve_video(
+    window: &mut Window,
+    video_channel: &channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
+) {
     for video in video_channel {
         // We need a video sink here to track where vid is
         // and to ensure that video doesn't get togggar behind
@@ -133,8 +136,8 @@ impl DS {
 
     pub fn populate_buffers(
         &self,
-        video_tx: &Sender<[u8; VIDEO_BUFFER_SIZE]>,
-        audio_tx: &Sender<[u8; AUDIO_BUFFER_SIZE]>,
+        video_tx: &channel::Sender<[u8; VIDEO_BUFFER_SIZE]>,
+        audio_tx: &channel::Sender<[u8; AUDIO_BUFFER_SIZE]>,
     ) {
         let mut buff = vec![0u8; FULL_BUFF_SIZE];
 
@@ -354,8 +357,15 @@ fn main() {
     let mut counter = FpsCounter::new();
 
     // Create channels for video and audio.
-    let (video_tx, video_rx) = mpsc::channel();
-    let (audio_tx, audio_rx) = mpsc::channel();
+    let (video_tx, video_rx): (
+        channel::Sender<[u8; VIDEO_BUFFER_SIZE]>,
+        channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
+    ) = channel::bounded(5);
+
+    let (audio_tx, audio_rx): (
+        channel::Sender<[u8; AUDIO_BUFFER_SIZE]>,
+        channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>,
+    ) = channel::bounded(5);
 
     // This needs to be optimized as it's currently quite large (both of them are)
     std::thread::Builder::new()
