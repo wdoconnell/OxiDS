@@ -1,8 +1,9 @@
 mod constants;
+use constants::av::MAX_QUEUED_FRAMES;
 use constants::av::{
     AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT,
-    FULL_BUFF_SIZE, MAX_PERMITTED_FRAME_SAMPLE_DELAY_NUM, PID_3DS, TARGET_FPS, VEND_OUT_IDX,
-    VEND_OUT_REQ, VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
+    FULL_BUFF_SIZE, PID_3DS, TARGET_FPS, VEND_OUT_IDX, VEND_OUT_REQ, VEND_OUT_VALUE,
+    VIDEO_BUFFER_SIZE, VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
 };
 use crossbeam::channel;
 use minifb::Scale;
@@ -54,12 +55,6 @@ pub fn serve_audio(sink: &rodio::Sink, audio_channel: &channel::Receiver<[u8; AU
 
         let audio_src =
             rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample).speed(1.0);
-
-        // Don't let audio get too far behind
-        if sink.len() > MAX_PERMITTED_FRAME_SAMPLE_DELAY_NUM {
-            sink.clear();
-            sink.play();
-        }
 
         sink.append(audio_src);
     }
@@ -159,15 +154,20 @@ impl DS {
         }
 
         let (vid_slice, audio_slice) = buff.split_at(VIDEO_BUFFER_SIZE);
+
         let mut vid_arr = [0u8; VIDEO_BUFFER_SIZE];
         vid_arr.copy_from_slice(vid_slice);
-        // Add error handling
-        video_tx.send(vid_arr).unwrap();
 
         let mut audio_arr = [0u8; AUDIO_BUFFER_SIZE];
         audio_arr.copy_from_slice(audio_slice);
-        // Add error handling
-        audio_tx.send(audio_arr).unwrap();
+
+        if video_tx.len() < MAX_QUEUED_FRAMES {
+            video_tx.try_send(vid_arr).unwrap();
+        }
+
+        if audio_tx.len() < MAX_QUEUED_FRAMES {
+            audio_tx.try_send(audio_arr).unwrap()
+        }
     }
 }
 
@@ -328,7 +328,7 @@ impl FpsCounter {
         let one_second_ago = current_time.sub(std::time::Duration::from_secs(1));
         if one_second_ago.gt(&self.start_time) {
             self.start_time = current_time;
-            println!("Data frames per second: {}", self.current_frames);
+            println!("Data frames/second: {}", self.current_frames);
             self.current_frames = 0;
         }
     }
@@ -360,12 +360,12 @@ fn main() {
     let (video_tx, video_rx): (
         channel::Sender<[u8; VIDEO_BUFFER_SIZE]>,
         channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
-    ) = channel::bounded(5);
+    ) = channel::bounded(MAX_QUEUED_FRAMES);
 
     let (audio_tx, audio_rx): (
         channel::Sender<[u8; AUDIO_BUFFER_SIZE]>,
         channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>,
-    ) = channel::bounded(5);
+    ) = channel::bounded(MAX_QUEUED_FRAMES);
 
     // This needs to be optimized as it's currently quite large (both of them are)
     std::thread::Builder::new()
