@@ -398,3 +398,19 @@ fn main() {
     //     ds.handle.attach_kernel_driver(&ds.endpoint.iface).unwrap();
     // };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotates_buffers() {
+        let initial_buff: &[u32] = &[255, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+
+        let rotated_buff = rotate_270(initial_buff, 3, 4);
+
+        let result: &[u32] = &[10, 40, 70, 100, 0, 30, 60, 90, 255, 20, 50, 80];
+
+        assert_eq!(*rotated_buff, *result);
+    }
+}
