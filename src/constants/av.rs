@@ -7,8 +7,8 @@ pub const VID_3DS: u16 = 0x16D0;
 pub const PID_3DS: u16 = 0x06A3;
 
 // Errors
-pub const CANNOT_FIND_3DS = "unable to locate 3ds device";
-pub const CANNOT_CONFIGURE_3DS = "could not configure 3ds device";
+pub const CANNOT_FIND_3DS: &str = "unable to locate 3ds device";
+pub const CANNOT_CONFIGURE_3DS: &str = "could not configure 3ds device";
 
 // Consider if will work below 10fps
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(100);
