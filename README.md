@@ -1,4 +1,4 @@
-# Krab3DS
+# OxiDS
 OxiDS is an open-source client for 3DS Capture Cards. It is written in Rust and focuses on optimizing graphical and audio performance. 
 
 # Requirements
