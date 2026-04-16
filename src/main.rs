@@ -1,10 +1,11 @@
 mod constants;
-use constants::av::MAX_QUEUED_FRAMES;
 use constants::av::{
-    AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT,
-    FULL_BUFF_SIZE, PID_3DS, TARGET_FPS, VEND_OUT_IDX, VEND_OUT_REQ, VEND_OUT_VALUE,
-    VIDEO_BUFFER_SIZE, VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
+    AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, AUDIO_THREAD_STACK_SIZE,
+    DEFAULT_TIMEOUT, FULL_BUFF_SIZE, PID_3DS, TARGET_FPS, VEND_OUT_IDX, VEND_OUT_REQ,
+    VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VIDEO_THREAD_STACK_SIZE, VID_3DS, WINDOW_HEIGHT,
+    WINDOW_WIDTH,
 };
+use constants::av::{CANNOT_CONFIGURE_3DS, CANNOT_FIND_3DS, MAX_QUEUED_FRAMES};
 use crossbeam::channel;
 use minifb::Scale;
 use minifb::ScaleMode;
@@ -339,10 +340,10 @@ impl FpsCounter {
 }
 
 fn main() {
-    let mut ds = get_3ds_device().expect("unable to locate 3ds device");
-    ds.configure().expect("could not configure 3ds");
+    let mut ds = get_3ds_device().expect(CANNOT_FIND_3DS);
+    ds.configure().expect(CANNOT_CONFIGURE_3DS);
 
-    // Start Audio
+    // Create audio output stream
     let (_audio_str, audio_stream_handle) =
         OutputStream::try_default().expect("couldnt create output stream");
     let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
@@ -353,7 +354,7 @@ fn main() {
         minifb::Window::new("Krab3DS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
     window.set_target_fps(TARGET_FPS);
 
-    // Start FPS
+    // Start FPS Counter
     let mut counter = FpsCounter::new();
 
     // Create channels for video and audio.
@@ -367,9 +368,9 @@ fn main() {
         channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>,
     ) = channel::bounded(MAX_QUEUED_FRAMES);
 
-    // This needs to be optimized as it's currently quite large (both of them are)
+    // Spawn thread to fill buffers with video and audio data.
     std::thread::Builder::new()
-        .stack_size(200 * 1024 * 1024)
+        .stack_size(VIDEO_THREAD_STACK_SIZE)
         .spawn(move || loop {
             ds.write_control();
             ds.populate_buffers(&video_tx, &audio_tx);
@@ -378,15 +379,15 @@ fn main() {
         })
         .unwrap();
 
-    // Play with this stack size to see how large thread is
-    // We can probbaly trck to see so we can optimize
+    // Spawn thread to serve audio using the sink.
     std::thread::Builder::new()
-        .stack_size(40 * 1024 * 1024)
+        .stack_size(AUDIO_THREAD_STACK_SIZE)
         .spawn(move || loop {
             serve_audio(&sink, &audio_rx);
         })
         .unwrap();
 
+    // As long as window is open, serve video in main thread.
     while window.is_open() && !window.is_key_down(minifb::Key::Escape) {
         serve_video(&mut window, &video_rx);
     }
