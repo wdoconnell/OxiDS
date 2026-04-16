@@ -1,8 +1,8 @@
 # Krab3DS
-Krab3DS is an open-source client for 3DS Capture Cards. It is written in Rust and focuses on optimizing graphical and audio performance. 
+OxiDS is an open-source client for 3DS Capture Cards. It is written in Rust and focuses on optimizing graphical and audio performance. 
 
 # Requirements
-At this time, Krab3DS supports [Loopy's 3DS Capture Card for the "Old" Nintendo 3DS](https://www.3dscapture.com/).
+At this time, OxiDS supports [Loopy's 3DS Capture Card for the "Old" Nintendo 3DS](https://www.3dscapture.com/).
 
 On *nix and Darwin systems, you may need libasound2-dev.
 
