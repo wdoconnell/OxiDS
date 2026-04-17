@@ -19,6 +19,6 @@ Support for Windows has not yet been tested. Linux support is in the works.
 1. Clone this repository.
 2. `cargo build --release`
 
-# Running Krab3DS
+# Running OxiDS
 1. `./target/release/Krab3DS`
 
