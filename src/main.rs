@@ -149,7 +149,6 @@ impl DS {
                 }
                 Err(err) => {
                     eprintln!("unable to read from bulk endpoint: {}", err);
-                    // break;
                 }
             }
         }
@@ -351,7 +350,7 @@ fn main() {
     // Start Window
     let opts = CustomWindowOptions::new(true, true, Scale::X2, ScaleMode::AspectRatioStretch);
     let mut window =
-        minifb::Window::new("Krab3DS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
+        minifb::Window::new("OxiDS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
     window.set_target_fps(TARGET_FPS);
 
     // Start FPS Counter
