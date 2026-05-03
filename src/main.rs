@@ -223,18 +223,20 @@ fn get_3ds_device() -> Result<DS, anyhow::Error> {
             let desc = dvc.device_descriptor().unwrap();
             desc.vendor_id() == VID_3DS && desc.product_id() == PID_3DS
         })
-        .ok_or(anyhow::Error::msg("unable to find 3ds device"))
+        .ok_or(anyhow::Error::msg(
+            "Expected device with VID 0x16D0, PID 0x06A3. Please reconnect your 3DS over USB.",
+        ))
         .unwrap();
 
     let handle = rusb::open_device_with_vid_pid(VID_3DS, PID_3DS)
-        .ok_or(anyhow::Error::msg("unable to retrieve device handle"))
+        .ok_or(anyhow::Error::msg("Could not retrieve device handle."))
         .unwrap();
 
     let config_desc = match device.config_descriptor(0) {
         Ok(cd) => cd,
         Err(e) => {
             return Err(anyhow::Error::msg(format!(
-                "unable to get config descriptor: {}",
+                "Could not fetch config descriptor: {}",
                 e
             )))
         }
