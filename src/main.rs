@@ -85,7 +85,7 @@ pub fn serve_video(
 ) {
     for video in video_channel {
         // We need a video sink here to track where vid is
-        // and to ensure that video doesn't get togggar behind
+        // and to ensure that video doesn't get too far behind
         let vid_buf_32 = u8_to_u32(&video);
         let rotated_vid_buf = rotate_270(&vid_buf_32, WINDOW_HEIGHT, WINDOW_WIDTH);
         window
@@ -267,7 +267,7 @@ fn get_3ds_device() -> Result<DS, anyhow::Error> {
         Some(id) => id,
         None => {
             return Err(anyhow::Error::msg(
-                "unable to retrieve inferface description",
+                "Unable to retrieve inferface description.",
             ))
         }
     };
@@ -275,7 +275,7 @@ fn get_3ds_device() -> Result<DS, anyhow::Error> {
         Some(ed) => ed,
         None => {
             return Err(anyhow::Error::msg(
-                "unable to retrieve endpoint description",
+                "Unable to retrieve endpoint description.",
             ))
         }
     };
