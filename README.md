@@ -20,5 +20,5 @@ Support for Windows has not yet been tested. Linux support is in the works.
 2. `cargo build --release`
 
 # Running OxiDS
-1. `./target/release/Krab3DS`
+1. `./target/release/OxiDS`
 
