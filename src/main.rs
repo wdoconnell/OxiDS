@@ -166,7 +166,7 @@ impl DS {
                     }
                 }
                 Err(err) => {
-                    eprintln!("unable to read from bulk endpoint: {}", err);
+                    eprintln!("Unable to read from bulk endpoint: {}", err);
                 }
             }
         }
@@ -261,7 +261,7 @@ fn get_3ds_device() -> Result<DS, anyhow::Error> {
     };
     let interface = match config_desc.interfaces().last() {
         Some(iface) => iface,
-        None => return Err(anyhow::Error::msg("unable to retrieve interface")),
+        None => return Err(anyhow::Error::msg("Unable to retrieve interface.")),
     };
     let interface_desc = match interface.descriptors().last() {
         Some(id) => id,
