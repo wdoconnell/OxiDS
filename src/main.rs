@@ -155,18 +155,24 @@ impl DS {
     ) {
         let mut buff = vec![0u8; FULL_BUFF_SIZE];
 
+        let mut total_bytes_recd = 0;
+
         loop {
-            match self
-                .handle
-                .read_bulk(self.endpoint.address, &mut buff, DEFAULT_TIMEOUT)
-            {
-                Ok(bytes_rec) => {
-                    if bytes_rec == 0 {
+            match self.handle.read_bulk(
+                self.endpoint.address,
+                &mut buff[total_bytes_recd..],
+                DEFAULT_TIMEOUT,
+            ) {
+                Ok(bytes_recd_this_time) => {
+                    if bytes_recd_this_time == 0 {
                         break;
                     }
+
+                    total_bytes_recd += bytes_recd_this_time
                 }
                 Err(err) => {
                     eprintln!("Unable to read from bulk endpoint: {}", err);
+                    break;
                 }
             }
         }
