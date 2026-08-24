@@ -10,8 +10,8 @@ use constants::av::{CANNOT_CONFIGURE_3DS, CANNOT_FIND_3DS, MAX_QUEUED_FRAMES};
 use crossbeam::channel;
 use minifb::Scale;
 use minifb::ScaleMode;
-use minifb::Window;
 use minifb::WindowOptions;
+use pixels::wgpu::{Backend, DeviceType};
 use pixels::{Pixels, SurfaceTexture};
 use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
@@ -113,7 +113,7 @@ pub fn serve_video(
         let _ = event_loop_proxy.send_event(video_data);
         // TODO - temporary to avoid overflow
         // std::thread::sleep(std::time::Duration::from_secs(1));
-        println!("WAITINGGGGGGGGGGGGGGGGGGGGGGGGGGG");
+        // println!("WAITINGGGGGGGGGGGGGGGGGGGGGGGGGGG");
         // window
         //     .update_with_buffer(&rotated_vid_buf, WINDOW_WIDTH, WINDOW_HEIGHT)
         //     .unwrap();
@@ -461,13 +461,15 @@ fn main() {
                 .unwrap(),
         )
     };
-
     let mut pixels = {
         let window_size = winit_window.inner_size();
         let surface_texture =
             SurfaceTexture::new(window_size.width, window_size.height, &winit_window);
         Pixels::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32, surface_texture).unwrap()
     };
+
+    let info = pixels.adapter().get_info();
+    println!("ADAPTER: {:?}", info);
 
     let mut count = 0;
 
@@ -477,11 +479,11 @@ fn main() {
     #[allow(deprecated)]
     let res = event_loop.run(|event, elwt| match event {
         Event::Resumed => {
-            println!("RESUMED");
+            // println!("RESUMED");
         }
         Event::NewEvents(e) => {
-            println!("{:?}", e);
-            println!("{}", count);
+            // println!("{:?}", e);
+            // println!("{}", count);
             count += 1;
             if count == 60 {
                 count = 0;
@@ -489,11 +491,11 @@ fn main() {
             input.step();
         }
         Event::DeviceEvent { device_id, event } => {
-            println!("DEVICE EVENT ON {:?}", device_id);
+            // println!("DEVICE EVENT ON {:?}", device_id);
             input.process_device_event(&event);
         }
         Event::UserEvent(e) => {
-            println!("USER EVENT");
+            // println!("USER EVENT");
             match e {
                 WindowUpdateEvent {
                     window_height,
@@ -523,25 +525,25 @@ fn main() {
                         // }
                     }
 
-                    println!("rendering");
+                    // println!("rendering");
                     pixels.render();
                 }
             }
         }
         Event::Suspended => {
-            println!("SUSPENDED EVENT");
+            // println!("SUSPENDED EVENT");
         }
         Event::AboutToWait => {
-            println!("ABOUT TO WAIT");
+            // println!("ABOUT TO WAIT");
         }
         Event::LoopExiting => {
-            println!("LOOP EXITING");
+            // println!("LOOP EXITING");
         }
         Event::MemoryWarning => {
-            println!("MEMORY WARNING");
+            // println!("MEMORY WARNING");
         }
         Event::WindowEvent { event, .. } => {
-            println!("{:?}", event);
+            // println!("{:?}", event);
             if input.process_window_event(&event) {
                 if input.key_pressed(winit::keyboard::KeyCode::Comma) || input.close_requested() {
                     println!("PUSHED COMMA");
@@ -574,11 +576,11 @@ mod tests {
 
     #[test]
     fn rotates_buffers() {
-        let initial_buff: &[u32] = &[255, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+        let initial_buff: &[u8] = &[255, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
         let rotated_buff = rotate_270(initial_buff, 3, 4);
 
-        let result: &[u32] = &[10, 40, 70, 100, 0, 30, 60, 90, 255, 20, 50, 80];
+        let result: &[u8] = &[10, 40, 70, 100, 0, 30, 60, 90, 255, 20, 50, 80];
 
         assert_eq!(*rotated_buff, *result);
     }
