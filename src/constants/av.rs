@@ -29,12 +29,12 @@ pub const MAX_QUEUED_FRAMES: usize = 5;
 pub const VIDEO_THREAD_STACK_SIZE: usize = 1024 * 1024 * 10;
 pub const AUDIO_THREAD_STACK_SIZE: usize = 1024 * 1024 * 2;
 // TODO - THIS ISNT OPTIMIZED AND NEEDS TO BE REVISITED
-pub const COMBINED_STACK_SIZE: usize = VIDEO_THREAD_STACK_SIZE * 10;
+pub const COMBINED_STACK_SIZE: usize = VIDEO_THREAD_STACK_SIZE * 5;
 
 pub const FULL_BUFF_SIZE: usize = VIDEO_BUFFER_SIZE + AUDIO_BUFFER_SIZE;
 
 pub const WINDOW_HEIGHT: usize = 240;
 pub const WINDOW_WIDTH: usize = 720;
 
-// Maximize
-pub const TARGET_FPS: usize = 80;
+pub const MAX_PERMITTED_DATA_POLLS_PER_SECOND: i32 = 70;
+pub const OVERPOLL_COOLDOWN_MS: u64 = 300;

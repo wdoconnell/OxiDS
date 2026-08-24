@@ -1,26 +1,28 @@
 mod constants;
-use crate::constants::av::{AUDIO_NUM_ZEROES_CHECK_SIZE, COMBINED_STACK_SIZE};
+use crate::constants::av::{
+    AUDIO_NUM_ZEROES_CHECK_SIZE, COMBINED_STACK_SIZE, MAX_PERMITTED_DATA_POLLS_PER_SECOND,
+    OVERPOLL_COOLDOWN_MS,
+};
 use constants::av::{
     AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, AUDIO_THREAD_STACK_SIZE,
-    DEFAULT_TIMEOUT, FULL_BUFF_SIZE, PID_3DS, TARGET_FPS, VEND_OUT_IDX, VEND_OUT_REQ,
-    VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VIDEO_THREAD_STACK_SIZE, VID_3DS, WINDOW_HEIGHT,
-    WINDOW_WIDTH,
+    DEFAULT_TIMEOUT, FULL_BUFF_SIZE, PID_3DS, VEND_OUT_IDX, VEND_OUT_REQ, VEND_OUT_VALUE,
+    VIDEO_BUFFER_SIZE, VIDEO_THREAD_STACK_SIZE, VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
 };
 use constants::av::{CANNOT_CONFIGURE_3DS, CANNOT_FIND_3DS, MAX_QUEUED_FRAMES};
 use crossbeam::channel;
 use minifb::Scale;
 use minifb::ScaleMode;
 use minifb::WindowOptions;
-use pixels::wgpu::{Backend, DeviceType};
 use pixels::{Pixels, SurfaceTexture};
 use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use winit::dpi::LogicalSize;
 use winit::event::Event;
 use winit::event_loop::{EventLoop, EventLoopProxy};
+use winit::platform::macos::WindowExtMacOS;
 use winit::window::Window as WinitWindow;
 use winit_input_helper::WinitInputHelper;
 
@@ -203,6 +205,10 @@ impl DS {
             }
         }
 
+        if total_bytes_recd == 0 {
+            return;
+        }
+
         let (vid_slice, audio_slice) = buff.split_at(VIDEO_BUFFER_SIZE);
 
         let mut vid_arr = [0u8; VIDEO_BUFFER_SIZE];
@@ -345,14 +351,16 @@ fn rotate_270(buffer: &[u8], width: usize, height: usize) -> Vec<u8> {
     rotated_buffer
 }
 
-struct FpsCounter {
+struct Counter {
+    name: String,
     start_time: SystemTime,
     current_frames: i32,
 }
 
-impl FpsCounter {
-    pub fn new() -> Self {
+impl Counter {
+    pub fn new(name: String) -> Self {
         Self {
+            name,
             start_time: std::time::SystemTime::now(),
             current_frames: 0,
         }
@@ -364,9 +372,11 @@ impl FpsCounter {
         let one_second_ago = current_time.sub(std::time::Duration::from_secs(1));
         if one_second_ago.gt(&self.start_time) {
             self.start_time = current_time;
-            println!("Data frames/second: {}", self.current_frames);
+            eprintln!("{} Runs/second: {}", self.name, self.current_frames);
             self.current_frames = 0;
         }
+
+        self.increment_frame();
     }
 
     pub fn increment_frame(&mut self) {
@@ -383,14 +393,7 @@ fn main() {
         OutputStream::try_default().expect("couldnt create output stream");
     let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
 
-    // Start Window
-    let opts = CustomWindowOptions::new(true, true, Scale::X2, ScaleMode::AspectRatioStretch);
-    // let mut window =
-    //     minifb::Window::new("OxiDS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
-    // window.set_target_fps(TARGET_FPS);
-
-    // Start FPS Counter
-    let mut counter = FpsCounter::new();
+    let mut usb_polls_per_second = Counter::new("USB".to_string());
 
     // Temporary section to create a second window for winit
     let event_loop = EventLoop::<WindowUpdateEvent>::with_user_event()
@@ -412,17 +415,23 @@ fn main() {
     ) = channel::bounded(MAX_QUEUED_FRAMES);
 
     // Spawn thread to fill buffers with video and audio data.
+    // Constantly retrieve new data from USB.
     std::thread::Builder::new()
         .stack_size(VIDEO_THREAD_STACK_SIZE)
         .spawn(move || loop {
             ds.write_control();
             ds.populate_buffers(&video_tx, &audio_tx);
-            counter.maybe_print_usb_dataps();
-            counter.increment_frame();
+            usb_polls_per_second.maybe_print_usb_dataps();
+
+            if usb_polls_per_second.current_frames > MAX_PERMITTED_DATA_POLLS_PER_SECOND {
+                std::thread::sleep(Duration::from_millis(OVERPOLL_COOLDOWN_MS));
+            }
         })
         .unwrap();
 
-    // Spawn thread to serve audio using the sink.
+    // The loop isn't strictly needed here, because serve_audio will normally
+    // run once. However, the absence of a loop can cause audio to stutter
+    // in cases where the sink is empty.
     std::thread::Builder::new()
         .stack_size(AUDIO_THREAD_STACK_SIZE)
         .spawn(move || loop {
@@ -430,7 +439,6 @@ fn main() {
         })
         .unwrap();
 
-    // Spawn thread to send video events to the window
     std::thread::Builder::new()
         .stack_size(COMBINED_STACK_SIZE)
         .spawn(move || loop {
@@ -461,6 +469,9 @@ fn main() {
                 .unwrap(),
         )
     };
+
+    winit_window.set_simple_fullscreen(true);
+
     let mut pixels = {
         let window_size = winit_window.inner_size();
         let surface_texture =
@@ -469,13 +480,14 @@ fn main() {
     };
 
     let info = pixels.adapter().get_info();
-    println!("ADAPTER: {:?}", info);
 
     let mut count = 0;
 
     // This is only handling device and window events so far,
     // so we need to add a separate input to update
-    // in response to the 3ds events
+    // in response to the 3ds eventsu
+    let mut updates = 0;
+
     #[allow(deprecated)]
     let res = event_loop.run(|event, elwt| match event {
         Event::Resumed => {
@@ -502,6 +514,7 @@ fn main() {
                     window_width,
                     video_buffer,
                 } => {
+                    updates += 1;
                     // Whenever we get an event, replace all pixels in buffer
                     // With the new image
                     //
@@ -546,10 +559,8 @@ fn main() {
             // println!("{:?}", event);
             if input.process_window_event(&event) {
                 if input.key_pressed(winit::keyboard::KeyCode::Comma) || input.close_requested() {
-                    println!("PUSHED COMMA");
                     elwt.exit();
                 } else {
-                    println!("PUSHED SOMEHTING ELSE");
                     let frame = pixels.frame_mut();
                     for pixel in frame.chunks_exact_mut(4) {
                         pixel[0] = 0xee;
