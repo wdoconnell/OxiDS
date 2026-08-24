@@ -346,6 +346,10 @@ struct FpsCounter {
     current_frames: i32,
 }
 
+enum CustomEvent {
+    Potato,
+}
+
 impl FpsCounter {
     pub fn new() -> Self {
         Self {
@@ -371,9 +375,70 @@ impl FpsCounter {
 }
 
 fn main() {
+    let mut ds = get_3ds_device().expect(CANNOT_FIND_3DS);
+    ds.configure().expect(CANNOT_CONFIGURE_3DS);
+
+    // Create audio output stream
+    let (_audio_str, audio_stream_handle) =
+        OutputStream::try_default().expect("couldnt create output stream");
+    let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
+
+    // Start Window
+    let opts = CustomWindowOptions::new(true, true, Scale::X2, ScaleMode::AspectRatioStretch);
+    let mut window =
+        minifb::Window::new("OxiDS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
+    window.set_target_fps(TARGET_FPS);
+
+    // Start FPS Counter
+    let mut counter = FpsCounter::new();
+
     // Temporary section to create a second window for winit
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoop::<CustomEvent>::with_user_event().build().unwrap();
+    let evt_loop_proxy = event_loop.create_proxy();
+
     let mut input = WinitInputHelper::new();
+
+    // Create channels for video and audio.
+    let (video_tx, video_rx): (
+        channel::Sender<[u8; VIDEO_BUFFER_SIZE]>,
+        channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
+    ) = channel::bounded(MAX_QUEUED_FRAMES);
+
+    let (audio_tx, audio_rx): (
+        channel::Sender<[u8; AUDIO_BUFFER_SIZE]>,
+        channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>,
+    ) = channel::bounded(MAX_QUEUED_FRAMES);
+
+    // Spawn thread to fill buffers with video and audio data.
+    std::thread::Builder::new()
+        .stack_size(VIDEO_THREAD_STACK_SIZE)
+        .spawn(move || loop {
+            ds.write_control();
+            ds.populate_buffers(&video_tx, &audio_tx);
+            counter.maybe_print_usb_dataps();
+            counter.increment_frame();
+        })
+        .unwrap();
+
+    // Spawn thread to serve audio using the sink.
+    std::thread::Builder::new()
+        .stack_size(AUDIO_THREAD_STACK_SIZE)
+        .spawn(move || loop {
+            serve_audio(&sink, &audio_rx);
+        })
+        .unwrap();
+
+    std::thread::Builder::new()
+        .spawn(move || loop {
+            let _ = evt_loop_proxy.send_event(CustomEvent::Potato);
+            println!("SENT");
+        })
+        .unwrap();
+
+    // As long as window is open, serve video in main thread.
+    // while window.is_open() && !window.is_key_down(minifb::Key::Escape) {
+    //     serve_video(&mut window, &video_rx);
+    // }
 
     // Create a basic window with guidance from https://github.com/parasyte/pixels/tree/main/examples/conway
     let winit_window = {
@@ -411,13 +476,17 @@ fn main() {
         Event::Resumed => {
             println!("RESUMED");
         }
-        Event::NewEvents(_) => {
-            println!("NEW EVENTS COUNT: {}", count);
+        Event::NewEvents(e) => {
+            println!("{:?}", e);
+            println!("{}", count);
             count += 1;
+            if count == 60 {
+                count = 0;
+            }
             input.step();
         }
-        Event::DeviceEvent { event, .. } => {
-            println!("DEVICE EVENT");
+        Event::DeviceEvent { device_id, event } => {
+            println!("DEVICE EVENT ON {:?}", device_id);
             input.process_device_event(&event);
         }
         Event::UserEvent(_) => {
@@ -455,58 +524,6 @@ fn main() {
             }
         }
     });
-
-    let mut ds = get_3ds_device().expect(CANNOT_FIND_3DS);
-    ds.configure().expect(CANNOT_CONFIGURE_3DS);
-
-    // Create audio output stream
-    let (_audio_str, audio_stream_handle) =
-        OutputStream::try_default().expect("couldnt create output stream");
-    let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
-
-    // Start Window
-    let opts = CustomWindowOptions::new(true, true, Scale::X2, ScaleMode::AspectRatioStretch);
-    let mut window =
-        minifb::Window::new("OxiDS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
-    window.set_target_fps(TARGET_FPS);
-
-    // Start FPS Counter
-    let mut counter = FpsCounter::new();
-
-    // Create channels for video and audio.
-    let (video_tx, video_rx): (
-        channel::Sender<[u8; VIDEO_BUFFER_SIZE]>,
-        channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
-    ) = channel::bounded(MAX_QUEUED_FRAMES);
-
-    let (audio_tx, audio_rx): (
-        channel::Sender<[u8; AUDIO_BUFFER_SIZE]>,
-        channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>,
-    ) = channel::bounded(MAX_QUEUED_FRAMES);
-
-    // Spawn thread to fill buffers with video and audio data.
-    std::thread::Builder::new()
-        .stack_size(VIDEO_THREAD_STACK_SIZE)
-        .spawn(move || loop {
-            ds.write_control();
-            ds.populate_buffers(&video_tx, &audio_tx);
-            counter.maybe_print_usb_dataps();
-            counter.increment_frame();
-        })
-        .unwrap();
-
-    // Spawn thread to serve audio using the sink.
-    std::thread::Builder::new()
-        .stack_size(AUDIO_THREAD_STACK_SIZE)
-        .spawn(move || loop {
-            serve_audio(&sink, &audio_rx);
-        })
-        .unwrap();
-
-    // As long as window is open, serve video in main thread.
-    while window.is_open() && !window.is_key_down(minifb::Key::Escape) {
-        serve_video(&mut window, &video_rx);
-    }
 
     // Handle separately
     // ds.handle.release_interface(ds.endpoint.iface).unwrap();
