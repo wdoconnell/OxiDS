@@ -1,4 +1,5 @@
 mod constants;
+use crate::constants::av::AUDIO_NUM_ZEROES_CHECK_SIZE;
 use constants::av::{
     AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, AUDIO_THREAD_STACK_SIZE,
     DEFAULT_TIMEOUT, FULL_BUFF_SIZE, PID_3DS, TARGET_FPS, VEND_OUT_IDX, VEND_OUT_REQ,
@@ -11,17 +12,17 @@ use minifb::Scale;
 use minifb::ScaleMode;
 use minifb::Window;
 use minifb::WindowOptions;
+use pixels::{Pixels, SurfaceTexture};
 use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
 use std::sync::Arc;
 use std::time::SystemTime;
 use winit::dpi::LogicalSize;
+use winit::event::Event;
 use winit::event_loop::EventLoop;
 use winit::window::Window as WinitWindow;
 use winit_input_helper::WinitInputHelper;
-
-use crate::constants::av::AUDIO_NUM_ZEROES_CHECK_SIZE;
 
 struct DSConfig {
     using_kernel_driver: bool,
@@ -374,10 +375,12 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
     let mut input = WinitInputHelper::new();
 
-    let window = {
+    // Create a basic window with guidance from https://github.com/parasyte/pixels/tree/main/examples/conway
+    let winit_window = {
         let size = LogicalSize::new(WINDOW_WIDTH as f64, WINDOW_HEIGHT as f64);
         let scaled_size = LogicalSize::new(WINDOW_WIDTH as f64 * 2.0, WINDOW_HEIGHT as f64 * 2.0);
 
+        // TODO - restructure to not use deprecated code
         #[allow(deprecated)]
         Arc::new(
             event_loop
@@ -390,6 +393,68 @@ fn main() {
                 .unwrap(),
         )
     };
+
+    let mut pixels = {
+        let window_size = winit_window.inner_size();
+        let surface_texture =
+            SurfaceTexture::new(window_size.width, window_size.height, &winit_window);
+        Pixels::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32, surface_texture).unwrap()
+    };
+
+    let mut count = 0;
+
+    // This is only handling device and window events so far,
+    // so we need to add a separate input to update
+    // in response to the 3ds events
+    #[allow(deprecated)]
+    let res = event_loop.run(|event, elwt| match event {
+        Event::Resumed => {
+            println!("RESUMED");
+        }
+        Event::NewEvents(_) => {
+            println!("NEW EVENTS COUNT: {}", count);
+            count += 1;
+            input.step();
+        }
+        Event::DeviceEvent { event, .. } => {
+            println!("DEVICE EVENT");
+            input.process_device_event(&event);
+        }
+        Event::UserEvent(_) => {
+            println!("USER EVENT");
+        }
+        Event::Suspended => {
+            println!("SUSPENDED EVENT");
+        }
+        Event::AboutToWait => {
+            println!("ABOUT TO WAIT");
+        }
+        Event::LoopExiting => {
+            println!("LOOP EXITING");
+        }
+        Event::MemoryWarning => {
+            println!("MEMORY WARNING");
+        }
+        Event::WindowEvent { event, .. } => {
+            println!("{:?}", event);
+            if input.process_window_event(&event) {
+                if input.key_pressed(winit::keyboard::KeyCode::Comma) || input.close_requested() {
+                    println!("PUSHED COMMA");
+                    elwt.exit();
+                } else {
+                    println!("PUSHED SOMEHTING ELSE");
+                    let frame = pixels.frame_mut();
+                    for pixel in frame.chunks_exact_mut(4) {
+                        pixel[0] = 0xee;
+                        pixel[1] = 0xaa;
+                        pixel[2] = 0x00;
+                        pixel[3] = 0xff;
+                    }
+                    pixels.render().unwrap();
+                }
+            }
+        }
+    });
 
     let mut ds = get_3ds_device().expect(CANNOT_FIND_3DS);
     ds.configure().expect(CANNOT_CONFIGURE_3DS);
