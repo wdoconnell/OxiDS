@@ -14,7 +14,12 @@ use minifb::WindowOptions;
 use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
+use std::sync::Arc;
 use std::time::SystemTime;
+use winit::dpi::LogicalSize;
+use winit::event_loop::EventLoop;
+use winit::window::Window as WinitWindow;
+use winit_input_helper::WinitInputHelper;
 
 use crate::constants::av::AUDIO_NUM_ZEROES_CHECK_SIZE;
 
@@ -365,6 +370,27 @@ impl FpsCounter {
 }
 
 fn main() {
+    // Temporary section to create a second window for winit
+    let event_loop = EventLoop::new().unwrap();
+    let mut input = WinitInputHelper::new();
+
+    let window = {
+        let size = LogicalSize::new(WINDOW_WIDTH as f64, WINDOW_HEIGHT as f64);
+        let scaled_size = LogicalSize::new(WINDOW_WIDTH as f64 * 2.0, WINDOW_HEIGHT as f64 * 2.0);
+
+        #[allow(deprecated)]
+        Arc::new(
+            event_loop
+                .create_window(
+                    WinitWindow::default_attributes()
+                        .with_title("New Window")
+                        .with_inner_size(scaled_size)
+                        .with_min_inner_size(size),
+                )
+                .unwrap(),
+        )
+    };
+
     let mut ds = get_3ds_device().expect(CANNOT_FIND_3DS);
     ds.configure().expect(CANNOT_CONFIGURE_3DS);
 
