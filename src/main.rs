@@ -1,5 +1,5 @@
 mod constants;
-use crate::constants::av::AUDIO_NUM_ZEROES_CHECK_SIZE;
+use crate::constants::av::{AUDIO_NUM_ZEROES_CHECK_SIZE, COMBINED_STACK_SIZE};
 use constants::av::{
     AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, AUDIO_THREAD_STACK_SIZE,
     DEFAULT_TIMEOUT, FULL_BUFF_SIZE, PID_3DS, TARGET_FPS, VEND_OUT_IDX, VEND_OUT_REQ,
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use winit::dpi::LogicalSize;
 use winit::event::Event;
-use winit::event_loop::EventLoop;
+use winit::event_loop::{EventLoop, EventLoopProxy};
 use winit::window::Window as WinitWindow;
 use winit_input_helper::WinitInputHelper;
 
@@ -85,18 +85,38 @@ pub fn serve_audio(sink: &rodio::Sink, audio_channel: &channel::Receiver<[u8; AU
     }
 }
 
+// Might be able to remove fixed sizes - TODO
+// TODO -- use newtype
+// TODO - move
+pub struct WindowUpdateEvent {
+    window_height: usize,
+    window_width: usize,
+    video_buffer: Vec<u8>,
+}
+
 pub fn serve_video(
-    window: &mut Window,
+    event_loop_proxy: &EventLoopProxy<WindowUpdateEvent>,
     video_channel: &channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
 ) {
     for video in video_channel {
         // We need a video sink here to track where vid is
         // and to ensure that video doesn't get too far behind
-        let vid_buf_32 = u8_to_u32(&video);
-        let rotated_vid_buf = rotate_270(&vid_buf_32, WINDOW_HEIGHT, WINDOW_WIDTH);
-        window
-            .update_with_buffer(&rotated_vid_buf, WINDOW_WIDTH, WINDOW_HEIGHT)
-            .unwrap();
+        // let vid_buf_32 = u8_to_u32(&video);
+        let rotated_vid_buf = rotate_270(&video, WINDOW_HEIGHT, WINDOW_WIDTH);
+
+        let video_data = WindowUpdateEvent {
+            window_height: WINDOW_HEIGHT,
+            window_width: WINDOW_WIDTH,
+            video_buffer: rotated_vid_buf,
+        };
+
+        let _ = event_loop_proxy.send_event(video_data);
+        // TODO - temporary to avoid overflow
+        // std::thread::sleep(std::time::Duration::from_secs(1));
+        println!("WAITINGGGGGGGGGGGGGGGGGGGGGGGGGGG");
+        // window
+        //     .update_with_buffer(&rotated_vid_buf, WINDOW_WIDTH, WINDOW_HEIGHT)
+        //     .unwrap();
     }
 }
 
@@ -302,8 +322,9 @@ fn get_3ds_device() -> Result<DS, anyhow::Error> {
     Ok(DS::new(handle, endpoint))
 }
 
-fn rotate_270(buffer: &[u32], width: usize, height: usize) -> Vec<u32> {
-    let mut rotated_buffer = vec![0; width * height];
+fn rotate_270(buffer: &[u8], width: usize, height: usize) -> Vec<u8> {
+    // 3 values per pixel (R, G, B)
+    let mut rotated_buffer = vec![0; width * height * 3];
 
     for y in 0..height {
         for x in 0..width {
@@ -312,42 +333,21 @@ fn rotate_270(buffer: &[u32], width: usize, height: usize) -> Vec<u32> {
             let rotated_y = width - 1 - x;
 
             // Map (x, y) from the original to the rotated position
-            rotated_buffer[rotated_x + rotated_y * height] = buffer[x + y * width];
+            let old_px = (x + y * width) * 3;
+            let new_px = (rotated_x + rotated_y * height) * 3;
+
+            rotated_buffer[new_px] = buffer[old_px];
+            rotated_buffer[new_px + 1] = buffer[old_px + 1];
+            rotated_buffer[new_px + 2] = buffer[old_px + 2];
         }
     }
 
     rotated_buffer
 }
 
-fn u8_to_u32(u8_buffer: &[u8]) -> Vec<u32> {
-    let mut u32_buffer = Vec::with_capacity(u8_buffer.len() / 3);
-    // See if we can replace with chunks exact?
-    for chunk in u8_buffer.chunks(3) {
-        if chunk.len() == 3 {
-            let r = chunk[0] as u32;
-            let g = chunk[1] as u32;
-            let b = chunk[2] as u32;
-            let alpha = 255;
-
-            let px = (alpha << 24) | (r << 16) | (g << 8) | b;
-
-            u32_buffer.push(px);
-        } else {
-            println!("chunk not complete");
-            println!("{:?}", chunk);
-        }
-    }
-
-    u32_buffer
-}
-
 struct FpsCounter {
     start_time: SystemTime,
     current_frames: i32,
-}
-
-enum CustomEvent {
-    Potato,
 }
 
 impl FpsCounter {
@@ -385,15 +385,17 @@ fn main() {
 
     // Start Window
     let opts = CustomWindowOptions::new(true, true, Scale::X2, ScaleMode::AspectRatioStretch);
-    let mut window =
-        minifb::Window::new("OxiDS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
-    window.set_target_fps(TARGET_FPS);
+    // let mut window =
+    //     minifb::Window::new("OxiDS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
+    // window.set_target_fps(TARGET_FPS);
 
     // Start FPS Counter
     let mut counter = FpsCounter::new();
 
     // Temporary section to create a second window for winit
-    let event_loop = EventLoop::<CustomEvent>::with_user_event().build().unwrap();
+    let event_loop = EventLoop::<WindowUpdateEvent>::with_user_event()
+        .build()
+        .unwrap();
     let evt_loop_proxy = event_loop.create_proxy();
 
     let mut input = WinitInputHelper::new();
@@ -428,10 +430,11 @@ fn main() {
         })
         .unwrap();
 
+    // Spawn thread to send video events to the window
     std::thread::Builder::new()
+        .stack_size(COMBINED_STACK_SIZE)
         .spawn(move || loop {
-            let _ = evt_loop_proxy.send_event(CustomEvent::Potato);
-            println!("SENT");
+            serve_video(&evt_loop_proxy, &video_rx);
         })
         .unwrap();
 
@@ -451,7 +454,7 @@ fn main() {
             event_loop
                 .create_window(
                     WinitWindow::default_attributes()
-                        .with_title("New Window")
+                        .with_title("OxiDS")
                         .with_inner_size(scaled_size)
                         .with_min_inner_size(size),
                 )
@@ -489,8 +492,41 @@ fn main() {
             println!("DEVICE EVENT ON {:?}", device_id);
             input.process_device_event(&event);
         }
-        Event::UserEvent(_) => {
+        Event::UserEvent(e) => {
             println!("USER EVENT");
+            match e {
+                WindowUpdateEvent {
+                    window_height,
+                    window_width,
+                    video_buffer,
+                } => {
+                    // Whenever we get an event, replace all pixels in buffer
+                    // With the new image
+                    //
+                    //
+                    //
+                    let mut counter = 0;
+                    let mut_px = pixels.frame_mut().chunks_mut(4);
+
+                    // TODO - new bug exists on GPU when going to the
+                    // 'all dark' mode in the 3DS Screen.
+                    for pixel in mut_px {
+                        pixel[0] = video_buffer[counter];
+                        pixel[1] = video_buffer[counter + 1];
+                        pixel[2] = video_buffer[counter + 2];
+                        pixel[3] = 255;
+
+                        counter += 3;
+
+                        // if counter >= 172800 {
+                        //     break;
+                        // }
+                    }
+
+                    println!("rendering");
+                    pixels.render();
+                }
+            }
         }
         Event::Suspended => {
             println!("SUSPENDED EVENT");
