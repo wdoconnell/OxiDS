@@ -481,16 +481,11 @@ fn main() {
             // TODO -> handle error
             pixels.render().unwrap();
         }
-        Event::Suspended => {
-            println!("SUSPENDED EVENT");
-        }
+        // TODO -> Custom handling for some event types.
+        Event::Suspended => {}
         Event::AboutToWait => {}
-        Event::LoopExiting => {
-            println!("LOOP EXITING");
-        }
-        Event::MemoryWarning => {
-            println!("MEMORY WARNING");
-        }
+        Event::LoopExiting => {}
+        Event::MemoryWarning => {}
         Event::WindowEvent { .. } => {}
     });
 
