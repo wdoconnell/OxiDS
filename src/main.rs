@@ -195,6 +195,8 @@ impl DS {
             }
         }
 
+        // There is no need to populate the video and audio channels
+        // If we did not retrieve any data.
         if total_bytes_recd == 0 {
             return;
         }
@@ -359,14 +361,18 @@ fn main() {
         OutputStream::try_default().expect("couldnt create output stream");
     let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
 
+    // Maintain a counter of frames retrieved over USB per second
     let mut usb_polls_per_second = Counter::new("USB".to_string());
 
-    // Temporary section to create a second window for winit
+    // Initialize the winit event loop.
     let event_loop = EventLoop::<WindowUpdateEvent>::with_user_event()
         .build()
         .unwrap();
+
+    // Proxy is needed to transmit video data to the window.
     let evt_loop_proxy = event_loop.create_proxy();
 
+    // Simplifies accessing keyboard and mouse inputs.
     let mut input = WinitInputHelper::new();
 
     // Create channels for video and audio.
@@ -374,7 +380,6 @@ fn main() {
         channel::Sender<[u8; VIDEO_BUFFER_SIZE]>,
         channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
     ) = channel::bounded(MAX_QUEUED_FRAMES);
-
     let (audio_tx, audio_rx): (
         channel::Sender<[u8; AUDIO_BUFFER_SIZE]>,
         channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>,
@@ -389,19 +394,16 @@ fn main() {
             ds.populate_buffers(&video_tx, &audio_tx);
             usb_polls_per_second.maybe_print_fps();
 
-            // This is important to ensure that our client does not endlessly try
-            // to poll data from the device when it is closed, which causes the bulk endpoint retrieval
-            // to end immediately. Without adding a cooldown, we can poll over 1000x per second,
-            // which is wasteful and not resource-efficient, since the device caps at 60fps.
+            // This is important to ensure that our client does not try
+            // to poll data from the device when it is closed. Without a cooldown
+            // we can make over 1000 attempts/second, which exceeds max fps (60).
             if usb_polls_per_second.current_frames > MAX_PERMITTED_DATA_POLLS_PER_SECOND {
                 std::thread::sleep(Duration::from_millis(OVERPOLL_COOLDOWN_MS));
             }
         })
         .unwrap();
 
-    // The loop isn't strictly needed here, because serve_audio will normally
-    // run once. However, the absence of a loop can cause audio to stutter
-    // in cases where the sink is empty.
+    // The absence of a loop can cause audio stutter when the sink is empty.
     std::thread::Builder::new()
         .stack_size(AUDIO_PLAYING_STACK_SIZE)
         .spawn(move || loop {
@@ -416,7 +418,8 @@ fn main() {
         })
         .unwrap();
 
-    // Create a basic window with guidance from https://github.com/parasyte/pixels/tree/main/examples/conway
+    // Create a basic window.
+    // Guidance from https://github.com/parasyte/pixels/tree/main/examples/conway
     let winit_window = {
         let size = LogicalSize::new(WINDOW_WIDTH as f64, WINDOW_HEIGHT as f64);
         let scaled_size = LogicalSize::new(
@@ -424,7 +427,7 @@ fn main() {
             WINDOW_HEIGHT as f64 * SCALING_FACTOR,
         );
 
-        // TODO - restructure to not use deprecated code
+        // TODO - Restructure to use the new 'app' interface.
         #[allow(deprecated)]
         Arc::new(
             event_loop
@@ -438,6 +441,7 @@ fn main() {
         )
     };
 
+    // Use default window size for the pixels interface.
     let mut pixels = {
         let window_size = winit_window.inner_size();
         let surface_texture =
@@ -445,13 +449,9 @@ fn main() {
         Pixels::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32, surface_texture).unwrap()
     };
 
+    // Print debug information to confirm GPU is being used.
     let info = pixels.adapter().get_info();
     eprintln!("Using the following GPU for rendering: {:?}", info.name);
-
-    // This is only handling device and window events so far,
-    // so we need to add a separate input to update
-    // in response to the 3ds eventsu
-    let mut updates = 0;
 
     #[allow(deprecated)]
     let _ = event_loop.run(|event, _elwt| match event {
@@ -464,7 +464,6 @@ fn main() {
         }
         Event::UserEvent(e) => {
             let WindowUpdateEvent { video_buffer } = e;
-            updates += 1;
             // Whenever we get an event, replace all pixels in buffer
             // With the new image
             let mut counter = 0;
