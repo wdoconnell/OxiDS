@@ -389,6 +389,10 @@ fn main() {
             ds.populate_buffers(&video_tx, &audio_tx);
             usb_polls_per_second.maybe_print_fps();
 
+            // This is important to ensure that our client does not endlessly try
+            // to poll data from the device when it is closed, which causes the bulk endpoint retrieval
+            // to end immediately. Without adding a cooldown, we can poll over 1000x per second,
+            // which is wasteful and not resource-efficient, since the device caps at 60fps.
             if usb_polls_per_second.current_frames > MAX_PERMITTED_DATA_POLLS_PER_SECOND {
                 std::thread::sleep(Duration::from_millis(OVERPOLL_COOLDOWN_MS));
             }
