@@ -1,7 +1,8 @@
 mod constants;
 use crate::constants::av::{
     AUDIO_NUM_ZEROES_CHECK_SIZE, AUDIO_PLAYING_STACK_SIZE, MAX_PERMITTED_DATA_POLLS_PER_SECOND,
-    OVERPOLL_COOLDOWN_MS, USB_PROCESSING_STACK_SIZE, VIDEO_DISPLAY_EVENT_STACK_SIZE,
+    OVERPOLL_COOLDOWN_MS, SCALING_FACTOR, USB_PROCESSING_STACK_SIZE,
+    VIDEO_DISPLAY_EVENT_STACK_SIZE,
 };
 use constants::av::{
     AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT,
@@ -17,8 +18,10 @@ use std::ops::Sub;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use winit::dpi::LogicalSize;
-use winit::event::Event;
+use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::{EventLoop, EventLoopProxy};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::platform::macos::WindowExtMacOS;
 use winit::window::Window as WinitWindow;
 use winit_input_helper::WinitInputHelper;
 
@@ -412,7 +415,10 @@ fn main() {
     // Create a basic window with guidance from https://github.com/parasyte/pixels/tree/main/examples/conway
     let winit_window = {
         let size = LogicalSize::new(WINDOW_WIDTH as f64, WINDOW_HEIGHT as f64);
-        let scaled_size = LogicalSize::new(WINDOW_WIDTH as f64 * 2.0, WINDOW_HEIGHT as f64 * 2.0);
+        let scaled_size = LogicalSize::new(
+            WINDOW_WIDTH as f64 * SCALING_FACTOR,
+            WINDOW_HEIGHT as f64 * SCALING_FACTOR,
+        );
 
         // TODO - restructure to not use deprecated code
         #[allow(deprecated)]
@@ -427,9 +433,6 @@ fn main() {
                 .unwrap(),
         )
     };
-
-    // Enable for fullscreen
-    // winit_window.set_simple_fullscreen(true);
 
     let mut pixels = {
         let window_size = winit_window.inner_size();
@@ -486,7 +489,54 @@ fn main() {
         Event::AboutToWait => {}
         Event::LoopExiting => {}
         Event::MemoryWarning => {}
-        Event::WindowEvent { .. } => {}
+        Event::WindowEvent { event, .. } => {
+            // Matching paradigm based on https://docs.rs/winit/latest/winit/event/struct.KeyEvent.html
+            match event {
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(KeyCode::Enter),
+                            state: ElementState::Pressed,
+                            repeat: false,
+                            ..
+                        },
+                    ..
+                } => {
+                    winit_window.set_simple_fullscreen(true);
+                }
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(KeyCode::Escape),
+                            state: ElementState::Pressed,
+                            repeat: false,
+                            ..
+                        },
+                    ..
+                } => {
+                    winit_window.set_simple_fullscreen(false);
+                }
+
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(KeyCode::Backspace),
+                            state: ElementState::Pressed,
+                            repeat: false,
+                            ..
+                        },
+                    ..
+                } => {
+                    let _ = winit_window.request_inner_size(LogicalSize {
+                        width: WINDOW_WIDTH as f64 * SCALING_FACTOR,
+                        height: WINDOW_HEIGHT as f64 * SCALING_FACTOR,
+                    });
+                }
+                _ => {
+                    // Any other keys to be handled can go here.
+                }
+            }
+        }
     });
 
     // TODO - cleanly release interface when program closes.

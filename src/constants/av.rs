@@ -37,6 +37,7 @@ pub const FULL_BUFF_SIZE: usize = VIDEO_BUFFER_SIZE + AUDIO_BUFFER_SIZE;
 
 pub const WINDOW_HEIGHT: usize = 240;
 pub const WINDOW_WIDTH: usize = 720;
+pub const SCALING_FACTOR: f64 = 2.0;
 
 pub const MAX_PERMITTED_DATA_POLLS_PER_SECOND: i32 = 70;
 pub const OVERPOLL_COOLDOWN_MS: u64 = 300;

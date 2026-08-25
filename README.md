@@ -22,3 +22,8 @@ Support for Windows has not yet been tested. Linux support is in the works.
 # Running OxiDS
 1. `./target/release/OxiDS`
 
+# Hotkeys
+`Enter`     - Enable fullscreen mode.
+`Escape`    - Exit fullscreen mode.
+`Backspace` - Restore original scaled window size.
+
