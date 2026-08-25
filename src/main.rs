@@ -10,9 +10,6 @@ use constants::av::{
 };
 use constants::av::{CANNOT_CONFIGURE_3DS, CANNOT_FIND_3DS, MAX_QUEUED_FRAMES};
 use crossbeam::channel;
-use minifb::Scale;
-use minifb::ScaleMode;
-use minifb::WindowOptions;
 use pixels::{Pixels, SurfaceTexture};
 use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
@@ -22,7 +19,6 @@ use std::time::{Duration, SystemTime};
 use winit::dpi::LogicalSize;
 use winit::event::Event;
 use winit::event_loop::{EventLoop, EventLoopProxy};
-use winit::platform::macos::WindowExtMacOS;
 use winit::window::Window as WinitWindow;
 use winit_input_helper::WinitInputHelper;
 
@@ -87,13 +83,14 @@ pub fn serve_audio(sink: &rodio::Sink, audio_channel: &channel::Receiver<[u8; AU
     }
 }
 
-// Might be able to remove fixed sizes - TODO
-// TODO -- use newtype
-// TODO - move
 pub struct WindowUpdateEvent {
-    window_height: usize,
-    window_width: usize,
     video_buffer: Vec<u8>,
+}
+
+impl WindowUpdateEvent {
+    fn new(video_buffer: Vec<u8>) -> Self {
+        Self { video_buffer }
+    }
 }
 
 pub fn serve_video(
@@ -103,22 +100,12 @@ pub fn serve_video(
     for video in video_channel {
         // We need a video sink here to track where vid is
         // and to ensure that video doesn't get too far behind
-        // let vid_buf_32 = u8_to_u32(&video);
+
         let rotated_vid_buf = rotate_270(&video, WINDOW_HEIGHT, WINDOW_WIDTH);
 
-        let video_data = WindowUpdateEvent {
-            window_height: WINDOW_HEIGHT,
-            window_width: WINDOW_WIDTH,
-            video_buffer: rotated_vid_buf,
-        };
+        let video_data = WindowUpdateEvent::new(rotated_vid_buf);
 
         let _ = event_loop_proxy.send_event(video_data);
-        // TODO - temporary to avoid overflow
-        // std::thread::sleep(std::time::Duration::from_secs(1));
-        // println!("WAITINGGGGGGGGGGGGGGGGGGGGGGGGGGG");
-        // window
-        //     .update_with_buffer(&rotated_vid_buf, WINDOW_WIDTH, WINDOW_HEIGHT)
-        //     .unwrap();
     }
 }
 
@@ -246,31 +233,6 @@ impl Endpoint {
     }
 }
 
-struct CustomWindowOptions {
-    opts: WindowOptions,
-}
-
-impl CustomWindowOptions {
-    pub fn new(borderless: bool, resize: bool, scale: Scale, scale_mode: ScaleMode) -> Self {
-        Self {
-            opts: WindowOptions {
-                borderless,
-                resize,
-                scale,
-                scale_mode,
-                none: false,
-                title: true,
-                topmost: false,
-                transparency: false,
-            },
-        }
-    }
-
-    pub fn inner(&self) -> WindowOptions {
-        self.opts
-    }
-}
-
 fn get_3ds_device() -> Result<DS, anyhow::Error> {
     let device = rusb::devices()
         .unwrap()
@@ -366,13 +328,13 @@ impl Counter {
         }
     }
 
-    pub fn maybe_print_usb_dataps(&mut self) {
+    pub fn maybe_print_fps(&mut self) {
         let current_time = std::time::SystemTime::now();
 
         let one_second_ago = current_time.sub(std::time::Duration::from_secs(1));
         if one_second_ago.gt(&self.start_time) {
             self.start_time = current_time;
-            eprintln!("{} Runs/second: {}", self.name, self.current_frames);
+            eprintln!("{} frames/second: {}", self.name, self.current_frames);
             self.current_frames = 0;
         }
 
@@ -385,6 +347,7 @@ impl Counter {
 }
 
 fn main() {
+    // Configure the 3DS
     let mut ds = get_3ds_device().expect(CANNOT_FIND_3DS);
     ds.configure().expect(CANNOT_CONFIGURE_3DS);
 
@@ -421,7 +384,7 @@ fn main() {
         .spawn(move || loop {
             ds.write_control();
             ds.populate_buffers(&video_tx, &audio_tx);
-            usb_polls_per_second.maybe_print_usb_dataps();
+            usb_polls_per_second.maybe_print_fps();
 
             if usb_polls_per_second.current_frames > MAX_PERMITTED_DATA_POLLS_PER_SECOND {
                 std::thread::sleep(Duration::from_millis(OVERPOLL_COOLDOWN_MS));
@@ -446,11 +409,6 @@ fn main() {
         })
         .unwrap();
 
-    // As long as window is open, serve video in main thread.
-    // while window.is_open() && !window.is_key_down(minifb::Key::Escape) {
-    //     serve_video(&mut window, &video_rx);
-    // }
-
     // Create a basic window with guidance from https://github.com/parasyte/pixels/tree/main/examples/conway
     let winit_window = {
         let size = LogicalSize::new(WINDOW_WIDTH as f64, WINDOW_HEIGHT as f64);
@@ -470,7 +428,8 @@ fn main() {
         )
     };
 
-    winit_window.set_simple_fullscreen(true);
+    // Enable for fullscreen
+    // winit_window.set_simple_fullscreen(true);
 
     let mut pixels = {
         let window_size = winit_window.inner_size();
@@ -480,8 +439,7 @@ fn main() {
     };
 
     let info = pixels.adapter().get_info();
-
-    let mut count = 0;
+    eprintln!("Using the following GPU for rendering: {:?}", info.name);
 
     // This is only handling device and window events so far,
     // so we need to add a separate input to update
@@ -489,92 +447,54 @@ fn main() {
     let mut updates = 0;
 
     #[allow(deprecated)]
-    let res = event_loop.run(|event, elwt| match event {
-        Event::Resumed => {
-            // println!("RESUMED");
-        }
-        Event::NewEvents(e) => {
-            // println!("{:?}", e);
-            // println!("{}", count);
-            count += 1;
-            if count == 60 {
-                count = 0;
-            }
+    let _ = event_loop.run(|event, _elwt| match event {
+        Event::Resumed => {}
+        Event::NewEvents(_) => {
             input.step();
         }
-        Event::DeviceEvent { device_id, event } => {
-            // println!("DEVICE EVENT ON {:?}", device_id);
+        Event::DeviceEvent { event, .. } => {
             input.process_device_event(&event);
         }
         Event::UserEvent(e) => {
-            // println!("USER EVENT");
-            match e {
-                WindowUpdateEvent {
-                    window_height,
-                    window_width,
-                    video_buffer,
-                } => {
-                    updates += 1;
-                    // Whenever we get an event, replace all pixels in buffer
-                    // With the new image
-                    //
-                    //
-                    //
-                    let mut counter = 0;
-                    let mut_px = pixels.frame_mut().chunks_mut(4);
+            let WindowUpdateEvent { video_buffer } = e;
+            updates += 1;
+            // Whenever we get an event, replace all pixels in buffer
+            // With the new image
+            let mut counter = 0;
+            let mut_px = pixels.frame_mut().chunks_mut(4);
 
-                    // TODO - new bug exists on GPU when going to the
-                    // 'all dark' mode in the 3DS Screen.
-                    for pixel in mut_px {
-                        pixel[0] = video_buffer[counter];
-                        pixel[1] = video_buffer[counter + 1];
-                        pixel[2] = video_buffer[counter + 2];
-                        pixel[3] = 255;
+            for pixel in mut_px {
+                // R, G, B
+                pixel[0] = video_buffer[counter];
+                pixel[1] = video_buffer[counter + 1];
+                pixel[2] = video_buffer[counter + 2];
 
-                        counter += 3;
+                // The capture card doesn't appear to transmit alpha values
+                // so we hardcode the 4th value, which is alpha/opacity to 100%.
+                pixel[3] = 255;
 
-                        // if counter >= 172800 {
-                        //     break;
-                        // }
-                    }
-
-                    // println!("rendering");
-                    pixels.render();
-                }
+                // Increment video_buffer counter by 3 (not 4) since it omits
+                // alpha values.
+                counter += 3;
             }
+
+            // TODO -> handle error
+            pixels.render().unwrap();
         }
         Event::Suspended => {
-            // println!("SUSPENDED EVENT");
+            println!("SUSPENDED EVENT");
         }
-        Event::AboutToWait => {
-            // println!("ABOUT TO WAIT");
-        }
+        Event::AboutToWait => {}
         Event::LoopExiting => {
-            // println!("LOOP EXITING");
+            println!("LOOP EXITING");
         }
         Event::MemoryWarning => {
-            // println!("MEMORY WARNING");
+            println!("MEMORY WARNING");
         }
-        Event::WindowEvent { event, .. } => {
-            // println!("{:?}", event);
-            if input.process_window_event(&event) {
-                if input.key_pressed(winit::keyboard::KeyCode::Comma) || input.close_requested() {
-                    elwt.exit();
-                } else {
-                    let frame = pixels.frame_mut();
-                    for pixel in frame.chunks_exact_mut(4) {
-                        pixel[0] = 0xee;
-                        pixel[1] = 0xaa;
-                        pixel[2] = 0x00;
-                        pixel[3] = 0xff;
-                    }
-                    pixels.render().unwrap();
-                }
-            }
-        }
+        Event::WindowEvent { .. } => {}
     });
 
-    // Handle separately
+    // TODO - cleanly release interface when program closes.
     // ds.handle.release_interface(ds.endpoint.iface).unwrap();
     // if ds.config.using_kernel_driver {
     //     ds.handle.attach_kernel_driver(&ds.endpoint.iface).unwrap();
@@ -587,11 +507,18 @@ mod tests {
 
     #[test]
     fn rotates_buffers() {
-        let initial_buff: &[u8] = &[255, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+        let initial_buff: &[u8] = &[
+            255, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 100, 90, 80, 70, 60, 50, 40, 30, 20,
+            10, 0, 255,
+        ];
 
-        let rotated_buff = rotate_270(initial_buff, 3, 4);
+        // Output buffer size is 3x width * height value since each has RGB values.
+        let rotated_buff = rotate_270(initial_buff, 2, 4);
 
-        let result: &[u8] = &[10, 40, 70, 100, 0, 30, 60, 90, 255, 20, 50, 80];
+        let result: &[u8] = &[
+            20, 30, 40, 80, 90, 100, 70, 60, 50, 10, 0, 255, 255, 0, 10, 50, 60, 70, 100, 90, 80,
+            40, 30, 20,
+        ];
 
         assert_eq!(*rotated_buff, *result);
     }
