@@ -1,12 +1,12 @@
 mod constants;
 use crate::constants::av::{
-    AUDIO_NUM_ZEROES_CHECK_SIZE, COMBINED_STACK_SIZE, MAX_PERMITTED_DATA_POLLS_PER_SECOND,
-    OVERPOLL_COOLDOWN_MS,
+    AUDIO_NUM_ZEROES_CHECK_SIZE, AUDIO_PLAYING_STACK_SIZE, MAX_PERMITTED_DATA_POLLS_PER_SECOND,
+    OVERPOLL_COOLDOWN_MS, USB_PROCESSING_STACK_SIZE, VIDEO_DISPLAY_EVENT_STACK_SIZE,
 };
 use constants::av::{
-    AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, AUDIO_THREAD_STACK_SIZE,
-    DEFAULT_TIMEOUT, FULL_BUFF_SIZE, PID_3DS, VEND_OUT_IDX, VEND_OUT_REQ, VEND_OUT_VALUE,
-    VIDEO_BUFFER_SIZE, VIDEO_THREAD_STACK_SIZE, VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
+    AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT,
+    FULL_BUFF_SIZE, PID_3DS, VEND_OUT_IDX, VEND_OUT_REQ, VEND_OUT_VALUE, VIDEO_BUFFER_SIZE,
+    VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
 };
 use constants::av::{CANNOT_CONFIGURE_3DS, CANNOT_FIND_3DS, MAX_QUEUED_FRAMES};
 use crossbeam::channel;
@@ -380,7 +380,7 @@ fn main() {
     // Spawn thread to fill buffers with video and audio data.
     // Constantly retrieve new data from USB.
     std::thread::Builder::new()
-        .stack_size(VIDEO_THREAD_STACK_SIZE)
+        .stack_size(USB_PROCESSING_STACK_SIZE)
         .spawn(move || loop {
             ds.write_control();
             ds.populate_buffers(&video_tx, &audio_tx);
@@ -396,14 +396,14 @@ fn main() {
     // run once. However, the absence of a loop can cause audio to stutter
     // in cases where the sink is empty.
     std::thread::Builder::new()
-        .stack_size(AUDIO_THREAD_STACK_SIZE)
+        .stack_size(AUDIO_PLAYING_STACK_SIZE)
         .spawn(move || loop {
             serve_audio(&sink, &audio_rx);
         })
         .unwrap();
 
     std::thread::Builder::new()
-        .stack_size(COMBINED_STACK_SIZE)
+        .stack_size(VIDEO_DISPLAY_EVENT_STACK_SIZE)
         .spawn(move || loop {
             serve_video(&evt_loop_proxy, &video_rx);
         })

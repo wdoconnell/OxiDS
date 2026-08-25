@@ -26,10 +26,12 @@ pub const AUDIO_SAMPLE_HZ: u32 = 32728;
 pub const AUDIO_NUM_ZEROES_END_DELIMETER: usize = 256;
 pub const AUDIO_NUM_ZEROES_CHECK_SIZE: usize = 10;
 pub const MAX_QUEUED_FRAMES: usize = 5;
-pub const VIDEO_THREAD_STACK_SIZE: usize = 1024 * 1024 * 10;
-pub const AUDIO_THREAD_STACK_SIZE: usize = 1024 * 1024 * 2;
-// TODO - THIS ISNT OPTIMIZED AND NEEDS TO BE REVISITED
-pub const COMBINED_STACK_SIZE: usize = VIDEO_THREAD_STACK_SIZE * 5;
+// 10 MB appears to be sufficient for this thread.
+pub const USB_PROCESSING_STACK_SIZE: usize = 1024 * 1024 * 10;
+// 2 MB appears to be sufficient for this thread.
+pub const AUDIO_PLAYING_STACK_SIZE: usize = 1024 * 1024 * 2;
+// 5 MB appears to be sufficient for this thread.
+pub const VIDEO_DISPLAY_EVENT_STACK_SIZE: usize = 1024 * 1024 * 5;
 
 pub const FULL_BUFF_SIZE: usize = VIDEO_BUFFER_SIZE + AUDIO_BUFFER_SIZE;
 
