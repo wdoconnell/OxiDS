@@ -11,9 +11,11 @@ use constants::av::{
 };
 use constants::av::{CANNOT_CONFIGURE_3DS, CANNOT_FIND_3DS, MAX_QUEUED_FRAMES};
 use crossbeam::channel;
+use dasp_sample::Sample;
 use pixels::{Pixels, SurfaceTexture};
-use rodio::{OutputStream, Source};
+use rodio::Source;
 use rusb::{DeviceHandle, GlobalContext};
+use std::num::{NonZeroU16, NonZeroU32};
 use std::ops::Sub;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -66,7 +68,10 @@ fn find_audio_frame_end(samples: &[i16]) -> usize {
         .unwrap_or(samples.len())
 }
 
-pub fn serve_audio(sink: &rodio::Sink, audio_channel: &channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>) {
+pub fn serve_audio(
+    sink: &rodio::Player,
+    audio_channel: &channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>,
+) {
     for audio in audio_channel {
         // Swap endianness
         let i16_sample: Vec<i16> = audio
@@ -76,10 +81,17 @@ pub fn serve_audio(sink: &rodio::Sink, audio_channel: &channel::Receiver<[u8; AU
 
         let split_pt = find_audio_frame_end(&i16_sample);
 
-        let remaining_sample = &i16_sample[..split_pt];
+        let remaining_sample: Vec<f32> = i16_sample[..split_pt]
+            .iter()
+            .map(|&samp| samp.to_sample::<f32>())
+            .collect();
 
-        let audio_src =
-            rodio::buffer::SamplesBuffer::new(2, AUDIO_SAMPLE_HZ, remaining_sample).speed(1.0);
+        let audio_src = rodio::buffer::SamplesBuffer::new(
+            NonZeroU16::new(2).expect("Channel count cannot be zero"),
+            NonZeroU32::new(AUDIO_SAMPLE_HZ).expect("Sample rate cannot be zero"),
+            remaining_sample,
+        )
+        .speed(1.0);
 
         sink.append(audio_src);
     }
@@ -356,9 +368,8 @@ fn main() {
     ds.configure().expect(CANNOT_CONFIGURE_3DS);
 
     // Create audio output stream
-    let (_audio_str, audio_stream_handle) =
-        OutputStream::try_default().expect("couldnt create output stream");
-    let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
+    let stream_handle = rodio::DeviceSinkBuilder::open_default_sink().unwrap();
+    let player = rodio::Player::connect_new(stream_handle.mixer());
 
     // Maintain a counter of frames retrieved over USB per second
     let mut usb_polls_per_second = Counter::new("USB".to_string());
@@ -406,7 +417,7 @@ fn main() {
     std::thread::Builder::new()
         .stack_size(AUDIO_PLAYING_STACK_SIZE)
         .spawn(move || loop {
-            serve_audio(&sink, &audio_rx);
+            serve_audio(&player, &audio_rx);
         })
         .unwrap();
 
