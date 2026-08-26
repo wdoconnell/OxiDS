@@ -21,8 +21,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::{EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::platform::macos::WindowExtMacOS;
-use winit::window::Window as WinitWindow;
+use winit::window::{Fullscreen, Window as WinitWindow};
 use winit_input_helper::WinitInputHelper;
 
 struct DSConfig {
@@ -505,7 +504,10 @@ fn main() {
                         },
                     ..
                 } => {
-                    winit_window.set_simple_fullscreen(true);
+                    // OSX offers .set_simple_fullscreen(), but other platforms do not.
+                    // For now, this will be implemented with set_fullscreen
+                    // for platform independence.
+                    winit_window.set_fullscreen(Some(Fullscreen::Borderless(None)));
                 }
                 WindowEvent::KeyboardInput {
                     event:
@@ -517,7 +519,7 @@ fn main() {
                         },
                     ..
                 } => {
-                    winit_window.set_simple_fullscreen(false);
+                    winit_window.set_fullscreen(None);
                 }
 
                 WindowEvent::KeyboardInput {
