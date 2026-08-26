@@ -1,11 +1,13 @@
 [package]
 name = "OxiDS"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 [dependencies]
 rusb = "0.9"
 anyhow = "1.0.89"
-minifb = "0.27.0"
 rodio = "0.19.0"
 crossbeam = "0.8"
+winit = "0.30"
+winit_input_helper = "0.17"
+pixels = "0.17"

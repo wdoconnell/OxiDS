@@ -1,22 +1,28 @@
 mod constants;
+use crate::constants::av::{
+    AUDIO_NUM_ZEROES_CHECK_SIZE, AUDIO_PLAYING_STACK_SIZE, MAX_PERMITTED_DATA_POLLS_PER_SECOND,
+    OVERPOLL_COOLDOWN_MS, SCALING_FACTOR, USB_PROCESSING_STACK_SIZE,
+    VIDEO_DISPLAY_EVENT_STACK_SIZE,
+};
 use constants::av::{
-    AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, AUDIO_THREAD_STACK_SIZE,
-    DEFAULT_TIMEOUT, FULL_BUFF_SIZE, PID_3DS, TARGET_FPS, VEND_OUT_IDX, VEND_OUT_REQ,
-    VEND_OUT_VALUE, VIDEO_BUFFER_SIZE, VIDEO_THREAD_STACK_SIZE, VID_3DS, WINDOW_HEIGHT,
-    WINDOW_WIDTH,
+    AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT,
+    FULL_BUFF_SIZE, PID_3DS, VEND_OUT_IDX, VEND_OUT_REQ, VEND_OUT_VALUE, VIDEO_BUFFER_SIZE,
+    VID_3DS, WINDOW_HEIGHT, WINDOW_WIDTH,
 };
 use constants::av::{CANNOT_CONFIGURE_3DS, CANNOT_FIND_3DS, MAX_QUEUED_FRAMES};
 use crossbeam::channel;
-use minifb::Scale;
-use minifb::ScaleMode;
-use minifb::Window;
-use minifb::WindowOptions;
+use pixels::{Pixels, SurfaceTexture};
 use rodio::{OutputStream, Source};
 use rusb::{DeviceHandle, GlobalContext};
 use std::ops::Sub;
-use std::time::SystemTime;
-
-use crate::constants::av::AUDIO_NUM_ZEROES_CHECK_SIZE;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use winit::dpi::LogicalSize;
+use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
+use winit::event_loop::{EventLoop, EventLoopProxy};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{Fullscreen, Window as WinitWindow};
+use winit_input_helper::WinitInputHelper;
 
 struct DSConfig {
     using_kernel_driver: bool,
@@ -79,18 +85,29 @@ pub fn serve_audio(sink: &rodio::Sink, audio_channel: &channel::Receiver<[u8; AU
     }
 }
 
+pub struct WindowUpdateEvent {
+    video_buffer: Vec<u8>,
+}
+
+impl WindowUpdateEvent {
+    fn new(video_buffer: Vec<u8>) -> Self {
+        Self { video_buffer }
+    }
+}
+
 pub fn serve_video(
-    window: &mut Window,
+    event_loop_proxy: &EventLoopProxy<WindowUpdateEvent>,
     video_channel: &channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
 ) {
     for video in video_channel {
         // We need a video sink here to track where vid is
         // and to ensure that video doesn't get too far behind
-        let vid_buf_32 = u8_to_u32(&video);
-        let rotated_vid_buf = rotate_270(&vid_buf_32, WINDOW_HEIGHT, WINDOW_WIDTH);
-        window
-            .update_with_buffer(&rotated_vid_buf, WINDOW_WIDTH, WINDOW_HEIGHT)
-            .unwrap();
+
+        let rotated_vid_buf = rotate_270(&video, WINDOW_HEIGHT, WINDOW_WIDTH);
+
+        let video_data = WindowUpdateEvent::new(rotated_vid_buf);
+
+        let _ = event_loop_proxy.send_event(video_data);
     }
 }
 
@@ -177,6 +194,12 @@ impl DS {
             }
         }
 
+        // There is no need to populate the video and audio channels
+        // If we did not retrieve any data.
+        if total_bytes_recd == 0 {
+            return;
+        }
+
         let (vid_slice, audio_slice) = buff.split_at(VIDEO_BUFFER_SIZE);
 
         let mut vid_arr = [0u8; VIDEO_BUFFER_SIZE];
@@ -211,31 +234,6 @@ impl Endpoint {
             setting,
             address,
         }
-    }
-}
-
-struct CustomWindowOptions {
-    opts: WindowOptions,
-}
-
-impl CustomWindowOptions {
-    pub fn new(borderless: bool, resize: bool, scale: Scale, scale_mode: ScaleMode) -> Self {
-        Self {
-            opts: WindowOptions {
-                borderless,
-                resize,
-                scale,
-                scale_mode,
-                none: false,
-                title: true,
-                topmost: false,
-                transparency: false,
-            },
-        }
-    }
-
-    pub fn inner(&self) -> WindowOptions {
-        self.opts
     }
 }
 
@@ -296,8 +294,9 @@ fn get_3ds_device() -> Result<DS, anyhow::Error> {
     Ok(DS::new(handle, endpoint))
 }
 
-fn rotate_270(buffer: &[u32], width: usize, height: usize) -> Vec<u32> {
-    let mut rotated_buffer = vec![0; width * height];
+fn rotate_270(buffer: &[u8], width: usize, height: usize) -> Vec<u8> {
+    // 3 values per pixel (R, G, B)
+    let mut rotated_buffer = vec![0; width * height * 3];
 
     for y in 0..height {
         for x in 0..width {
@@ -306,57 +305,44 @@ fn rotate_270(buffer: &[u32], width: usize, height: usize) -> Vec<u32> {
             let rotated_y = width - 1 - x;
 
             // Map (x, y) from the original to the rotated position
-            rotated_buffer[rotated_x + rotated_y * height] = buffer[x + y * width];
+            let old_px = (x + y * width) * 3;
+            let new_px = (rotated_x + rotated_y * height) * 3;
+
+            rotated_buffer[new_px] = buffer[old_px];
+            rotated_buffer[new_px + 1] = buffer[old_px + 1];
+            rotated_buffer[new_px + 2] = buffer[old_px + 2];
         }
     }
 
     rotated_buffer
 }
 
-fn u8_to_u32(u8_buffer: &[u8]) -> Vec<u32> {
-    let mut u32_buffer = Vec::with_capacity(u8_buffer.len() / 3);
-    // See if we can replace with chunks exact?
-    for chunk in u8_buffer.chunks(3) {
-        if chunk.len() == 3 {
-            let r = chunk[0] as u32;
-            let g = chunk[1] as u32;
-            let b = chunk[2] as u32;
-            let alpha = 255;
-
-            let px = (alpha << 24) | (r << 16) | (g << 8) | b;
-
-            u32_buffer.push(px);
-        } else {
-            println!("chunk not complete");
-            println!("{:?}", chunk);
-        }
-    }
-
-    u32_buffer
-}
-
-struct FpsCounter {
+struct Counter {
+    name: String,
     start_time: SystemTime,
     current_frames: i32,
 }
 
-impl FpsCounter {
-    pub fn new() -> Self {
+impl Counter {
+    pub fn new(name: String) -> Self {
         Self {
+            name,
             start_time: std::time::SystemTime::now(),
             current_frames: 0,
         }
     }
 
-    pub fn maybe_print_usb_dataps(&mut self) {
+    pub fn maybe_print_fps(&mut self) {
         let current_time = std::time::SystemTime::now();
 
         let one_second_ago = current_time.sub(std::time::Duration::from_secs(1));
         if one_second_ago.gt(&self.start_time) {
             self.start_time = current_time;
-            println!("Data frames/second: {}", self.current_frames);
+            eprintln!("{} frames/second: {}", self.name, self.current_frames);
             self.current_frames = 0;
         }
+
+        self.increment_frame();
     }
 
     pub fn increment_frame(&mut self) {
@@ -365,6 +351,7 @@ impl FpsCounter {
 }
 
 fn main() {
+    // Configure the 3DS
     let mut ds = get_3ds_device().expect(CANNOT_FIND_3DS);
     ds.configure().expect(CANNOT_CONFIGURE_3DS);
 
@@ -373,51 +360,191 @@ fn main() {
         OutputStream::try_default().expect("couldnt create output stream");
     let sink = rodio::Sink::try_new(&audio_stream_handle).unwrap();
 
-    // Start Window
-    let opts = CustomWindowOptions::new(true, true, Scale::X2, ScaleMode::AspectRatioStretch);
-    let mut window =
-        minifb::Window::new("OxiDS", WINDOW_WIDTH, WINDOW_HEIGHT, opts.inner()).unwrap();
-    window.set_target_fps(TARGET_FPS);
+    // Maintain a counter of frames retrieved over USB per second
+    let mut usb_polls_per_second = Counter::new("USB".to_string());
 
-    // Start FPS Counter
-    let mut counter = FpsCounter::new();
+    // Initialize the winit event loop.
+    let event_loop = EventLoop::<WindowUpdateEvent>::with_user_event()
+        .build()
+        .unwrap();
+
+    // Proxy is needed to transmit video data to the window.
+    let evt_loop_proxy = event_loop.create_proxy();
+
+    // Simplifies accessing keyboard and mouse inputs.
+    let mut input = WinitInputHelper::new();
 
     // Create channels for video and audio.
     let (video_tx, video_rx): (
         channel::Sender<[u8; VIDEO_BUFFER_SIZE]>,
         channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
     ) = channel::bounded(MAX_QUEUED_FRAMES);
-
     let (audio_tx, audio_rx): (
         channel::Sender<[u8; AUDIO_BUFFER_SIZE]>,
         channel::Receiver<[u8; AUDIO_BUFFER_SIZE]>,
     ) = channel::bounded(MAX_QUEUED_FRAMES);
 
     // Spawn thread to fill buffers with video and audio data.
+    // Constantly retrieve new data from USB.
     std::thread::Builder::new()
-        .stack_size(VIDEO_THREAD_STACK_SIZE)
+        .stack_size(USB_PROCESSING_STACK_SIZE)
         .spawn(move || loop {
             ds.write_control();
             ds.populate_buffers(&video_tx, &audio_tx);
-            counter.maybe_print_usb_dataps();
-            counter.increment_frame();
+            usb_polls_per_second.maybe_print_fps();
+
+            // This is important to ensure that our client does not try
+            // to poll data from the device when it is closed. Without a cooldown
+            // we can make over 1000 attempts/second, which exceeds max fps (60).
+            if usb_polls_per_second.current_frames > MAX_PERMITTED_DATA_POLLS_PER_SECOND {
+                std::thread::sleep(Duration::from_millis(OVERPOLL_COOLDOWN_MS));
+            }
         })
         .unwrap();
 
-    // Spawn thread to serve audio using the sink.
+    // The absence of a loop can cause audio stutter when the sink is empty.
     std::thread::Builder::new()
-        .stack_size(AUDIO_THREAD_STACK_SIZE)
+        .stack_size(AUDIO_PLAYING_STACK_SIZE)
         .spawn(move || loop {
             serve_audio(&sink, &audio_rx);
         })
         .unwrap();
 
-    // As long as window is open, serve video in main thread.
-    while window.is_open() && !window.is_key_down(minifb::Key::Escape) {
-        serve_video(&mut window, &video_rx);
-    }
+    std::thread::Builder::new()
+        .stack_size(VIDEO_DISPLAY_EVENT_STACK_SIZE)
+        .spawn(move || loop {
+            serve_video(&evt_loop_proxy, &video_rx);
+        })
+        .unwrap();
 
-    // Handle separately
+    // Create a basic window.
+    // Guidance from https://github.com/parasyte/pixels/tree/main/examples/conway
+    let winit_window = {
+        let size = LogicalSize::new(WINDOW_WIDTH as f64, WINDOW_HEIGHT as f64);
+        let scaled_size = LogicalSize::new(
+            WINDOW_WIDTH as f64 * SCALING_FACTOR,
+            WINDOW_HEIGHT as f64 * SCALING_FACTOR,
+        );
+
+        // TODO - Restructure to use the new 'app' interface.
+        #[allow(deprecated)]
+        Arc::new(
+            event_loop
+                .create_window(
+                    WinitWindow::default_attributes()
+                        .with_title("OxiDS")
+                        .with_inner_size(scaled_size)
+                        .with_min_inner_size(size),
+                )
+                .unwrap(),
+        )
+    };
+
+    // Use default window size for the pixels interface.
+    let mut pixels = {
+        let window_size = winit_window.inner_size();
+        let surface_texture =
+            SurfaceTexture::new(window_size.width, window_size.height, &winit_window);
+        Pixels::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32, surface_texture).unwrap()
+    };
+
+    // Print debug information to confirm GPU is being used.
+    let info = pixels.adapter().get_info();
+    eprintln!("Using the following GPU for rendering: {:?}", info.name);
+
+    #[allow(deprecated)]
+    let _ = event_loop.run(|event, _elwt| match event {
+        Event::Resumed => {}
+        Event::NewEvents(_) => {
+            input.step();
+        }
+        Event::DeviceEvent { event, .. } => {
+            input.process_device_event(&event);
+        }
+        Event::UserEvent(e) => {
+            let WindowUpdateEvent { video_buffer } = e;
+            // Whenever we get an event, replace all pixels in buffer
+            // With the new image
+            let mut counter = 0;
+            let mut_px = pixels.frame_mut().chunks_mut(4);
+
+            for pixel in mut_px {
+                // R, G, B
+                pixel[0] = video_buffer[counter];
+                pixel[1] = video_buffer[counter + 1];
+                pixel[2] = video_buffer[counter + 2];
+
+                // The capture card doesn't appear to transmit alpha values
+                // so we hardcode the 4th value, which is alpha/opacity to 100%.
+                pixel[3] = 255;
+
+                // Increment video_buffer counter by 3 (not 4) since it omits
+                // alpha values.
+                counter += 3;
+            }
+
+            // TODO -> handle error
+            pixels.render().unwrap();
+        }
+        // TODO -> Custom handling for some event types.
+        Event::Suspended => {}
+        Event::AboutToWait => {}
+        Event::LoopExiting => {}
+        Event::MemoryWarning => {}
+        Event::WindowEvent { event, .. } => {
+            // Matching paradigm based on https://docs.rs/winit/latest/winit/event/struct.KeyEvent.html
+            match event {
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(KeyCode::Enter),
+                            state: ElementState::Pressed,
+                            repeat: false,
+                            ..
+                        },
+                    ..
+                } => {
+                    // OSX offers .set_simple_fullscreen(), but other platforms do not.
+                    // For now, this will be implemented with set_fullscreen
+                    // for platform independence.
+                    winit_window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                }
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(KeyCode::Escape),
+                            state: ElementState::Pressed,
+                            repeat: false,
+                            ..
+                        },
+                    ..
+                } => {
+                    winit_window.set_fullscreen(None);
+                }
+
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(KeyCode::Backspace),
+                            state: ElementState::Pressed,
+                            repeat: false,
+                            ..
+                        },
+                    ..
+                } => {
+                    let _ = winit_window.request_inner_size(LogicalSize {
+                        width: WINDOW_WIDTH as f64 * SCALING_FACTOR,
+                        height: WINDOW_HEIGHT as f64 * SCALING_FACTOR,
+                    });
+                }
+                _ => {
+                    // Any other keys to be handled can go here.
+                }
+            }
+        }
+    });
+
+    // TODO - cleanly release interface when program closes.
     // ds.handle.release_interface(ds.endpoint.iface).unwrap();
     // if ds.config.using_kernel_driver {
     //     ds.handle.attach_kernel_driver(&ds.endpoint.iface).unwrap();
@@ -430,11 +557,18 @@ mod tests {
 
     #[test]
     fn rotates_buffers() {
-        let initial_buff: &[u32] = &[255, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+        let initial_buff: &[u8] = &[
+            255, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 100, 90, 80, 70, 60, 50, 40, 30, 20,
+            10, 0, 255,
+        ];
 
-        let rotated_buff = rotate_270(initial_buff, 3, 4);
+        // Output buffer size is 3x width * height value since each has RGB values.
+        let rotated_buff = rotate_270(initial_buff, 2, 4);
 
-        let result: &[u32] = &[10, 40, 70, 100, 0, 30, 60, 90, 255, 20, 50, 80];
+        let result: &[u8] = &[
+            20, 30, 40, 80, 90, 100, 70, 60, 50, 10, 0, 255, 255, 0, 10, 50, 60, 70, 100, 90, 80,
+            40, 30, 20,
+        ];
 
         assert_eq!(*rotated_buff, *result);
     }
