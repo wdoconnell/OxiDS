@@ -23,7 +23,7 @@ Support for Windows has not yet been tested. Linux support is in the works.
 1. `./target/release/OxiDS`
 
 # Commands
-- `Dump`    - Dump pixel buffer to a specified `--outfile`. Note that this should only be used for short runs, as this is uncompressed video that will rapidly fill drive space.
+- `Dump`    - Dump pixel buffer to a specified `--outfile`. Note that this should only be used for short runs, as this is represented as a series of PNG data that will rapidly fill drive space.
 
 # Flags
 - `V`       - Print version
