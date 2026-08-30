@@ -12,3 +12,4 @@ dasp_sample = "0.11.0"
 winit = "0.30"
 winit_input_helper = "0.17"
 pixels = "0.17"
+clap = { version = "4.6.6", features = ["derive"] }

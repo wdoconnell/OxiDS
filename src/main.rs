@@ -4,6 +4,7 @@ use crate::constants::av::{
     OVERPOLL_COOLDOWN_MS, SCALING_FACTOR, USB_PROCESSING_STACK_SIZE,
     VIDEO_DISPLAY_EVENT_STACK_SIZE,
 };
+use clap::{Parser, Subcommand};
 use constants::av::{
     AUDIO_BUFFER_SIZE, AUDIO_NUM_ZEROES_END_DELIMETER, AUDIO_SAMPLE_HZ, DEFAULT_TIMEOUT,
     FULL_BUFF_SIZE, PID_3DS, VEND_OUT_IDX, VEND_OUT_REQ, VEND_OUT_VALUE, VIDEO_BUFFER_SIZE,
@@ -17,6 +18,7 @@ use rodio::Source;
 use rusb::{DeviceHandle, GlobalContext};
 use std::num::{NonZeroU16, NonZeroU32};
 use std::ops::Sub;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use winit::dpi::LogicalSize;
@@ -25,6 +27,35 @@ use winit::event_loop::{EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window as WinitWindow};
 use winit_input_helper::WinitInputHelper;
+
+// Based on https://docs.rs/clap/latest/clap/_derive/_tutorial/index.html
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    // Follow-on command name
+    name: Option<String>,
+
+    // Path to configuration file
+    // Not yet used.
+    #[arg(short, long, value_name = "FILE")]
+    config: Option<PathBuf>,
+
+    // For debug mode
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    debug: u8,
+
+    // Subcommands
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Test {
+        #[arg(short, long)]
+        list: bool,
+    },
+}
 
 struct DSConfig {
     using_kernel_driver: bool,
@@ -363,6 +394,8 @@ impl Counter {
 }
 
 fn main() {
+    let cli = Cli::parse();
+
     // Configure the 3DS
     let mut ds = get_3ds_device().expect(CANNOT_FIND_3DS);
     ds.configure().expect(CANNOT_CONFIGURE_3DS);
@@ -402,7 +435,9 @@ fn main() {
         .spawn(move || loop {
             ds.write_control();
             ds.populate_buffers(&video_tx, &audio_tx);
-            usb_polls_per_second.maybe_print_fps();
+            if cli.debug > 0 {
+                usb_polls_per_second.maybe_print_fps();
+            }
 
             // This is important to ensure that our client does not try
             // to poll data from the device when it is closed. Without a cooldown
@@ -460,8 +495,10 @@ fn main() {
     };
 
     // Print debug information to confirm GPU is being used.
-    let info = pixels.adapter().get_info();
-    eprintln!("Using the following GPU for rendering: {:?}", info.name);
+    if cli.debug > 0 {
+        let info = pixels.adapter().get_info();
+        eprintln!("Using the following GPU for rendering: {:?}", info.name);
+    }
 
     #[allow(deprecated)]
     let _ = event_loop.run(|event, _elwt| match event {

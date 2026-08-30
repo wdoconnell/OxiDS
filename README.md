@@ -22,6 +22,10 @@ Support for Windows has not yet been tested. Linux support is in the works.
 # Running OxiDS
 1. `./target/release/OxiDS`
 
+# Commands
+- V         - Print version
+- d         - Print debug information (GPU in use, FPS)
+
 # Hotkeys
 `Enter`     - Enable fullscreen mode.
 `Escape`    - Exit fullscreen mode.
