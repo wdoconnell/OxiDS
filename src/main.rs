@@ -494,22 +494,25 @@ fn main() {
         )
     };
 
-    let winit_secondary_window = {
-        let size = LogicalSize::new(320.0, 240.0);
-        let scaled_size = LogicalSize::new(320.0 * SCALING_FACTOR, 240.0 * SCALING_FACTOR);
+    let winit_secondary_window = match cli.split {
+        true => Some({
+            let size = LogicalSize::new(320.0, 240.0);
+            let scaled_size = LogicalSize::new(320.0 * SCALING_FACTOR, 240.0 * SCALING_FACTOR);
 
-        // TODO - Restructure to use the new 'app' interface.
-        #[allow(deprecated)]
-        Arc::new(
-            event_loop
-                .create_window(
-                    WinitWindow::default_attributes()
-                        .with_title("OxiDS (Bottom Screen)")
-                        .with_inner_size(scaled_size)
-                        .with_min_inner_size(size),
-                )
-                .unwrap(),
-        )
+            // TODO - Restructure to use the new 'app' interface.
+            #[allow(deprecated)]
+            Arc::new(
+                event_loop
+                    .create_window(
+                        WinitWindow::default_attributes()
+                            .with_title("OxiDS (Bottom Screen)")
+                            .with_inner_size(scaled_size)
+                            .with_min_inner_size(size),
+                    )
+                    .unwrap(),
+            )
+        }),
+        false => None,
     };
 
     // Use default window size for the pixels interface.
@@ -525,14 +528,18 @@ fn main() {
         .unwrap()
     };
 
-    let mut pixels_secondary = {
-        let window_size = winit_secondary_window.inner_size();
-        let surface_texture = SurfaceTexture::new(
-            window_size.width,
-            window_size.height,
-            &winit_secondary_window,
-        );
-        Pixels::new(320, 240, surface_texture).unwrap()
+    let mut pixels_secondary = match cli.split {
+        // Unwraps are safe because the secondary window will exist if this config option is enabled.
+        true => Some({
+            let window_size = winit_secondary_window.unwrap().inner_size();
+            let surface_texture = SurfaceTexture::new(
+                window_size.width,
+                window_size.height,
+                &winit_secondary_window.unwrap(),
+            );
+            Pixels::new(320, 240, surface_texture).unwrap()
+        }),
+        false => None,
     };
 
     // Print debug information to confirm GPU is being used.
@@ -558,9 +565,14 @@ fn main() {
             let mut top_line_counter = 0;
 
             let mut_px = pixels.frame_mut().chunks_mut(4);
-            let mut_secondary_px = pixels_secondary.frame_mut().chunks_mut(4);
+            let mut_secondary_px = match cli.split {
+                true => Some(pixels_secondary.unwrap().frame_mut().chunks_mut(4)),
+                false => None,
+            };
 
+            // Render the top screen
             for pixel in mut_px {
+                // TODO - IF WE SHOULDN'T NEED THIS CAP I DONT THINK
                 if counter >= 518400 {
                     break;
                 }
@@ -587,33 +599,36 @@ fn main() {
                 }
             }
 
-            // If a second window is being rendered, we need to offset,
-            // and not render, the first 400 * 3 bytes of data for each line,
-            // which represents the main screen.
-            let mut line_counter = TOP_WINDOW_WIDTH * RGB_COLOR_SIZE;
-            for pixel in mut_secondary_px {
-                // R, G, B
-                pixel[0] = video_buffer[line_counter];
-                pixel[1] = video_buffer[line_counter + 1];
-                pixel[2] = video_buffer[line_counter + 2];
+            if cli.split {
+                // If a second window is being rendered, we need to offset,
+                // and not render, the first 400 * 3 bytes of data for each line,
+                // which represents the main screen.
+                let mut line_counter = TOP_WINDOW_WIDTH * RGB_COLOR_SIZE;
+                for pixel in mut_secondary_px.unwrap() {
+                    // R, G, B
+                    pixel[0] = video_buffer[line_counter];
+                    pixel[1] = video_buffer[line_counter + 1];
+                    pixel[2] = video_buffer[line_counter + 2];
 
-                // The capture card doesn't appear to transmit alpha values
-                // so we hardcode the 4th value, which is alpha/opacity to 100%.
-                pixel[3] = 255;
+                    // The capture card doesn't appear to transmit alpha values
+                    // so we hardcode the 4th value, which is alpha/opacity to 100%.
+                    pixel[3] = 255;
 
-                // Iterate to the next pixel
-                line_counter += 3;
+                    // Iterate to the next pixel
+                    line_counter += 3;
 
-                // But, skip the first 400 pixels (main screen)
-                // if we've reached the end of the line
-                if line_counter.is_multiple_of(WINDOW_WIDTH * RGB_COLOR_SIZE) {
-                    line_counter += TOP_WINDOW_WIDTH * RGB_COLOR_SIZE;
+                    // But, skip the first 400 pixels (main screen)
+                    // if we've reached the end of the line
+                    if line_counter.is_multiple_of(WINDOW_WIDTH * RGB_COLOR_SIZE) {
+                        line_counter += TOP_WINDOW_WIDTH * RGB_COLOR_SIZE;
+                    }
                 }
+
+                pixels_secondary.unwrap().render().unwrap();
             }
 
             // TODO -> handle error
             pixels.render().unwrap();
-            pixels_secondary.render().unwrap();
         }
         // TODO -> Custom handling for some event types.
         Event::Suspended => {}
