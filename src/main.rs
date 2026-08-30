@@ -1,8 +1,8 @@
 mod constants;
 use crate::constants::av::{
-    AUDIO_NUM_ZEROES_CHECK_SIZE, AUDIO_PLAYING_STACK_SIZE, MAX_PERMITTED_DATA_POLLS_PER_SECOND,
-    OVERPOLL_COOLDOWN_MS, SCALING_FACTOR, USB_PROCESSING_STACK_SIZE,
-    VIDEO_DISPLAY_EVENT_STACK_SIZE,
+    AUDIO_NUM_ZEROES_CHECK_SIZE, AUDIO_PLAYING_STACK_SIZE, BOTTOM_WINDOW_WIDTH,
+    MAX_PERMITTED_DATA_POLLS_PER_SECOND, OVERPOLL_COOLDOWN_MS, RGB_COLOR_SIZE, SCALING_FACTOR,
+    TOP_WINDOW_WIDTH, USB_PROCESSING_STACK_SIZE, VIDEO_DISPLAY_EVENT_STACK_SIZE,
 };
 use clap::{Parser, Subcommand};
 use constants::av::{
@@ -466,12 +466,17 @@ fn main() {
         })
         .unwrap();
 
+    let main_window_width = match cli.split {
+        true => TOP_WINDOW_WIDTH as f64,
+        false => WINDOW_WIDTH as f64,
+    };
+
     // Create a basic window.
     // Guidance from https://github.com/parasyte/pixels/tree/main/examples/conway
     let winit_main_window = {
-        let size = LogicalSize::new(WINDOW_WIDTH as f64, WINDOW_HEIGHT as f64);
+        let size = LogicalSize::new(main_window_width, WINDOW_HEIGHT as f64);
         let scaled_size = LogicalSize::new(
-            WINDOW_WIDTH as f64 * SCALING_FACTOR,
+            main_window_width * SCALING_FACTOR,
             WINDOW_HEIGHT as f64 * SCALING_FACTOR,
         );
 
@@ -512,7 +517,12 @@ fn main() {
         let window_size = winit_main_window.inner_size();
         let surface_texture =
             SurfaceTexture::new(window_size.width, window_size.height, &winit_main_window);
-        Pixels::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32, surface_texture).unwrap()
+        Pixels::new(
+            main_window_width as u32,
+            WINDOW_HEIGHT as u32,
+            surface_texture,
+        )
+        .unwrap()
     };
 
     let mut pixels_secondary = {
@@ -545,10 +555,16 @@ fn main() {
             // Whenever we get an event, replace all pixels in buffer
             // With the new image
             let mut counter = 0;
+            let mut top_line_counter = 0;
+
             let mut_px = pixels.frame_mut().chunks_mut(4);
             let mut_secondary_px = pixels_secondary.frame_mut().chunks_mut(4);
 
             for pixel in mut_px {
+                if counter >= 518400 {
+                    break;
+                }
+
                 // R, G, B
                 pixel[0] = video_buffer[counter];
                 pixel[1] = video_buffer[counter + 1];
@@ -561,10 +577,20 @@ fn main() {
                 // Increment video_buffer counter by 3 (not 4) since it omits
                 // alpha values.
                 counter += 3;
+                top_line_counter += 1;
+
+                // Once we have rendered 400 pixels on the line in split
+                // we must skip the next 320 * 3 (RGB).
+                if cli.split && top_line_counter % TOP_WINDOW_WIDTH == 0 {
+                    top_line_counter = 0;
+                    counter += BOTTOM_WINDOW_WIDTH * RGB_COLOR_SIZE;
+                }
             }
 
-            // Determines where we are in the line.
-            let mut line_counter = 400 * 3;
+            // If a second window is being rendered, we need to offset,
+            // and not render, the first 400 * 3 bytes of data for each line,
+            // which represents the main screen.
+            let mut line_counter = TOP_WINDOW_WIDTH * RGB_COLOR_SIZE;
             for pixel in mut_secondary_px {
                 // R, G, B
                 pixel[0] = video_buffer[line_counter];
@@ -575,11 +601,13 @@ fn main() {
                 // so we hardcode the 4th value, which is alpha/opacity to 100%.
                 pixel[3] = 255;
 
-                // Increment video_buffer counter by 3 (not 4) since it omits
-                // alpha values.
+                // Iterate to the next pixel
                 line_counter += 3;
-                if line_counter % (720 * 3) == 0 {
-                    line_counter += 1200;
+
+                // But, skip the first 400 pixels (main screen)
+                // if we've reached the end of the line
+                if line_counter.is_multiple_of(WINDOW_WIDTH * RGB_COLOR_SIZE) {
+                    line_counter += TOP_WINDOW_WIDTH * RGB_COLOR_SIZE;
                 }
             }
 
