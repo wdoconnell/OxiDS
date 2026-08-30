@@ -44,6 +44,9 @@ struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     debug: u8,
 
+    #[arg(short, long)]
+    split: bool,
+
     // Subcommands
     #[command(subcommand)]
     command: Option<Commands>,
@@ -465,7 +468,7 @@ fn main() {
 
     // Create a basic window.
     // Guidance from https://github.com/parasyte/pixels/tree/main/examples/conway
-    let winit_window = {
+    let winit_main_window = {
         let size = LogicalSize::new(WINDOW_WIDTH as f64, WINDOW_HEIGHT as f64);
         let scaled_size = LogicalSize::new(
             WINDOW_WIDTH as f64 * SCALING_FACTOR,
@@ -486,12 +489,40 @@ fn main() {
         )
     };
 
+    let winit_secondary_window = {
+        let size = LogicalSize::new(320.0, 240.0);
+        let scaled_size = LogicalSize::new(320.0 * SCALING_FACTOR, 240.0 * SCALING_FACTOR);
+
+        // TODO - Restructure to use the new 'app' interface.
+        #[allow(deprecated)]
+        Arc::new(
+            event_loop
+                .create_window(
+                    WinitWindow::default_attributes()
+                        .with_title("OxiDS (Bottom Screen)")
+                        .with_inner_size(scaled_size)
+                        .with_min_inner_size(size),
+                )
+                .unwrap(),
+        )
+    };
+
     // Use default window size for the pixels interface.
     let mut pixels = {
-        let window_size = winit_window.inner_size();
+        let window_size = winit_main_window.inner_size();
         let surface_texture =
-            SurfaceTexture::new(window_size.width, window_size.height, &winit_window);
+            SurfaceTexture::new(window_size.width, window_size.height, &winit_main_window);
         Pixels::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32, surface_texture).unwrap()
+    };
+
+    let mut pixels_secondary = {
+        let window_size = winit_secondary_window.inner_size();
+        let surface_texture = SurfaceTexture::new(
+            window_size.width,
+            window_size.height,
+            &winit_secondary_window,
+        );
+        Pixels::new(320, 240, surface_texture).unwrap()
     };
 
     // Print debug information to confirm GPU is being used.
@@ -515,6 +546,7 @@ fn main() {
             // With the new image
             let mut counter = 0;
             let mut_px = pixels.frame_mut().chunks_mut(4);
+            let mut_secondary_px = pixels_secondary.frame_mut().chunks_mut(4);
 
             for pixel in mut_px {
                 // R, G, B
@@ -531,8 +563,29 @@ fn main() {
                 counter += 3;
             }
 
+            // Determines where we are in the line.
+            let mut line_counter = 400 * 3;
+            for pixel in mut_secondary_px {
+                // R, G, B
+                pixel[0] = video_buffer[line_counter];
+                pixel[1] = video_buffer[line_counter + 1];
+                pixel[2] = video_buffer[line_counter + 2];
+
+                // The capture card doesn't appear to transmit alpha values
+                // so we hardcode the 4th value, which is alpha/opacity to 100%.
+                pixel[3] = 255;
+
+                // Increment video_buffer counter by 3 (not 4) since it omits
+                // alpha values.
+                line_counter += 3;
+                if line_counter % (720 * 3) == 0 {
+                    line_counter += 1200;
+                }
+            }
+
             // TODO -> handle error
             pixels.render().unwrap();
+            pixels_secondary.render().unwrap();
         }
         // TODO -> Custom handling for some event types.
         Event::Suspended => {}
@@ -555,7 +608,7 @@ fn main() {
                     // OSX offers .set_simple_fullscreen(), but other platforms do not.
                     // For now, this will be implemented with set_fullscreen
                     // for platform independence.
-                    winit_window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                    winit_main_window.set_fullscreen(Some(Fullscreen::Borderless(None)));
                 }
                 WindowEvent::KeyboardInput {
                     event:
@@ -567,7 +620,7 @@ fn main() {
                         },
                     ..
                 } => {
-                    winit_window.set_fullscreen(None);
+                    winit_main_window.set_fullscreen(None);
                 }
 
                 WindowEvent::KeyboardInput {
@@ -580,7 +633,7 @@ fn main() {
                         },
                     ..
                 } => {
-                    let _ = winit_window.request_inner_size(LogicalSize {
+                    let _ = winit_main_window.request_inner_size(LogicalSize {
                         width: WINDOW_WIDTH as f64 * SCALING_FACTOR,
                         height: WINDOW_HEIGHT as f64 * SCALING_FACTOR,
                     });
