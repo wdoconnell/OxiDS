@@ -16,6 +16,8 @@ use dasp_sample::Sample;
 use pixels::{Pixels, SurfaceTexture};
 use rodio::Source;
 use rusb::{DeviceHandle, GlobalContext};
+use std::fs::File;
+use std::io::Write;
 use std::num::{NonZeroU16, NonZeroU32};
 use std::ops::Sub;
 use std::path::PathBuf;
@@ -51,9 +53,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Test {
-        #[arg(short, long)]
-        list: bool,
+    Dump {
+        #[arg(short, long, value_name = "OUT_FILE", required(true))]
+        outfile: Option<PathBuf>,
     },
 }
 
@@ -500,6 +502,22 @@ fn main() {
         eprintln!("Using the following GPU for rendering: {:?}", info.name);
     }
 
+    // Once per run, decide if there is a need to dump video output.
+    // Error out if no outfile was provided or the filename matches
+    // a file that already exists, to avoid accidental overwriting of data.
+    let mut outfile_name = match &cli.command {
+        Some(Commands::Dump { outfile }) => {
+            let output = outfile.as_deref().expect("Error: No outfile provided.");
+
+            let out_as_file = File::create_new(output).expect(
+                "Error: File would be overwritten. Specify a file name that does not yet exist.",
+            );
+
+            Some(out_as_file)
+        }
+        None => None,
+    };
+
     #[allow(deprecated)]
     let _ = event_loop.run(|event, _elwt| match event {
         Event::Resumed => {}
@@ -529,6 +547,11 @@ fn main() {
                 // Increment video_buffer counter by 3 (not 4) since it omits
                 // alpha values.
                 counter += 3;
+            }
+
+            // If specified an outfile, dump pixel buffer to a file.
+            if let Some(f) = outfile_name.as_mut() {
+                f.write_all(pixels.frame()).expect("FAILED TO WRITE DATA");
             }
 
             // TODO -> handle error

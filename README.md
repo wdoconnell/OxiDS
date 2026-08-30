@@ -23,8 +23,11 @@ Support for Windows has not yet been tested. Linux support is in the works.
 1. `./target/release/OxiDS`
 
 # Commands
-- V         - Print version
-- d         - Print debug information (GPU in use, FPS)
+- `Dump`    - Dump pixel buffer to a specified `--outfile`. Note that this should only be used for short runs, as this is uncompressed video that will rapidly fill drive space.
+
+# Flags
+- `V`       - Print version
+- `d`       - Print debug information (GPU in use, FPS)
 
 # Hotkeys
 `Enter`     - Enable fullscreen mode.
