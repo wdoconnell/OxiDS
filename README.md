@@ -26,6 +26,11 @@ Support for Windows has not yet been tested. Linux support is in the works.
 - V         - Print version
 - d         - Print debug information (GPU in use, FPS)
 - s         - Split mode, allows secondary screen to be resized independently
+- `Dump`    - Dump pixel buffer to a specified `--outfile`. Note that this should only be used for short runs, as this is represented as a series of PNG data that will rapidly fill drive space.
+
+# Flags
+- `V`       - Print version
+- `d`       - Print debug information (GPU in use, FPS)
 
 # Hotkeys
 `Enter`     - Enable fullscreen mode.
