@@ -25,6 +25,7 @@ Support for Windows has not yet been tested. Linux support is in the works.
 # Commands
 - V         - Print version
 - d         - Print debug information (GPU in use, FPS)
+- s         - Split mode, allows secondary screen to be resized independently
 
 # Hotkeys
 `Enter`     - Enable fullscreen mode.
