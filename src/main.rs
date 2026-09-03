@@ -531,11 +531,12 @@ fn main() {
     let mut pixels_secondary = match cli.split {
         // Unwraps are safe because the secondary window will exist if this config option is enabled.
         true => Some({
-            let window_size = winit_secondary_window.unwrap().inner_size();
+            let winit_secondary_window_unwrapped = winit_secondary_window.as_ref().unwrap();
+            let window_size = winit_secondary_window_unwrapped.inner_size();
             let surface_texture = SurfaceTexture::new(
                 window_size.width,
                 window_size.height,
-                &winit_secondary_window.unwrap(),
+                winit_secondary_window_unwrapped,
             );
             Pixels::new(320, 240, surface_texture).unwrap()
         }),
@@ -566,7 +567,7 @@ fn main() {
 
             let mut_px = pixels.frame_mut().chunks_mut(4);
             let mut_secondary_px = match cli.split {
-                true => Some(pixels_secondary.unwrap().frame_mut().chunks_mut(4)),
+                true => Some(pixels_secondary.as_mut().unwrap().frame_mut().chunks_mut(4)),
                 false => None,
             };
 
@@ -624,7 +625,7 @@ fn main() {
                     }
                 }
 
-                pixels_secondary.unwrap().render().unwrap();
+                pixels_secondary.as_mut().unwrap().render().unwrap();
             }
 
             // TODO -> handle error
