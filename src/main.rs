@@ -148,6 +148,11 @@ pub fn serve_video(
     video_channel: &channel::Receiver<[u8; VIDEO_BUFFER_SIZE]>,
 ) {
     for video in video_channel {
+        // If we have exceeded the maximum queued frames, process and move on.
+        if video_channel.len() > MAX_QUEUED_FRAMES {
+            continue;
+        }
+
         // We need a video sink here to track where vid is
         // and to ensure that video doesn't get too far behind
 
@@ -256,9 +261,10 @@ impl DS {
         let mut audio_arr = [0u8; AUDIO_BUFFER_SIZE];
         audio_arr.copy_from_slice(audio_slice);
 
-        if video_tx.len() < MAX_QUEUED_FRAMES {
-            video_tx.try_send(vid_arr).unwrap();
-        }
+        // Don't transmit more frames than we should store in the channel.
+        // if video_tx.len() < MAX_QUEUED_FRAMES {
+        video_tx.try_send(vid_arr).unwrap();
+        // }
 
         if audio_tx.len() < MAX_QUEUED_FRAMES {
             audio_tx.try_send(audio_arr).unwrap()
