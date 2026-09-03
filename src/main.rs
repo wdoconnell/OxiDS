@@ -591,11 +591,6 @@ fn main() {
 
             // Render the top screen
             for pixel in mut_px {
-                // TODO - IF WE SHOULDN'T NEED THIS CAP I DONT THINK
-                if counter >= 518400 {
-                    break;
-                }
-
                 // R, G, B
                 pixel[0] = video_buffer[counter];
                 pixel[1] = video_buffer[counter + 1];
