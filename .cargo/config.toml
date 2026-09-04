@@ -1,0 +1,21 @@
+# Solution taken from discussion in this Rust thread
+# https://users.rust-lang.org/t/stack-overflow-when-compiling-on-windows-10/50818/7
+# Date: 9/4/2026
+
+# This is needed because, by default, in the current Rust version
+# the size of the main thread on Windows is 1MB.
+# This is sufficiently small that it results in a stack overflow,
+# which can be resolved by making the Windows stack size
+# equal to the default stack size on Linux and OSX (8MB)
+
+# 64 bit MSVC
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+	"-C", "link-arg=/STACK:8000000"
+]
+
+# 64 bit Mingw
+[target.x86_64-pc-windows-gnu]
+rustflags = [
+    "-C", "link-arg=-Wl,--stack,8000000"
+]
