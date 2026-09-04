@@ -1,5 +1,7 @@
 # OxiDS
-OxiDS is an open-source client for 3DS Capture Cards. It is written in Rust and focuses on optimizing graphical and audio performance. 
+OxiDS is an open-source client for 3DS Capture Cards. It is written in Rust and focuses on optimizing graphical and audio performance. This project provides an alternative to the Windows executable for [Loopy's 3DS Capture Card](https://wwww.3dscapture.com/).
+
+OxiDS is not affiliated with Loopy and/or any manufacturer of the capture card, or Nintendo.
 
 # Requirements
 At this time, OxiDS supports [Loopy's 3DS Capture Card for the "Old" Nintendo 3DS](https://www.3dscapture.com/).
