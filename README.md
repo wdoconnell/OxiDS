@@ -21,6 +21,8 @@ Support for Windows has been tested, but needs performance improvement. Linux is
 # Running OxiDS
 1. `./target/release/OxiDS`
 
+![OxiDS Example](./examples/screenshot.png)
+
 # Commands
 - V         - Print version
 - d         - Print debug information (GPU in use, FPS)
